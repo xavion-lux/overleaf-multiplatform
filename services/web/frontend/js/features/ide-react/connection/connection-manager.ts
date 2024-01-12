@@ -1,7 +1,6 @@
 import { ConnectionError, ConnectionState } from './types/connection-state'
 import SocketIoShim from '../../../ide/connection/SocketIoShim'
 import getMeta from '../../../utils/meta'
-import { Emitter } from 'strict-event-emitter'
 import { Socket } from '@/features/ide-react/connection/types/socket'
 import { debugConsole } from '@/utils/debugging'
 
@@ -10,7 +9,8 @@ const TWO_MINUTES_IN_MS = 2 * 60 * 1000
 const DISCONNECT_AFTER_MS = ONE_HOUR_IN_MS * 24
 
 const CONNECTION_ERROR_RECONNECT_DELAY = 1000
-const USER_ACTIVITY_RECONNECT_DELAY = 1000
+const USER_ACTIVITY_RECONNECT_NOW_DELAY = 1000
+const USER_ACTIVITY_RECONNECT_DELAY = 5000
 const JOIN_PROJECT_RATE_LIMITED_DELAY = 15 * 1000
 
 const RECONNECT_GRACEFULLY_RETRY_INTERVAL_MS = 5000
@@ -28,11 +28,12 @@ const initialState: ConnectionState = {
   error: '',
 }
 
-type Events = {
-  statechange: [{ state: ConnectionState; previousState: ConnectionState }]
-}
+export class StateChangeEvent extends CustomEvent<{
+  state: ConnectionState
+  previousState: ConnectionState
+}> {}
 
-export class ConnectionManager extends Emitter<Events> {
+export class ConnectionManager extends EventTarget {
   state: ConnectionState = initialState
   private connectionAttempt: number | null = null
   private gracefullyReconnectUntil = 0
@@ -95,7 +96,7 @@ export class ConnectionManager extends Emitter<Events> {
   }
 
   tryReconnectNow() {
-    this.tryReconnectWithBackoff(USER_ACTIVITY_RECONNECT_DELAY)
+    this.tryReconnectWithBackoff(USER_ACTIVITY_RECONNECT_NOW_DELAY)
   }
 
   // Called when document is clicked or the editor cursor changes
@@ -112,7 +113,9 @@ export class ConnectionManager extends Emitter<Events> {
       previousState,
       state,
     })
-    this.emit('statechange', { state, previousState })
+    this.dispatchEvent(
+      new StateChangeEvent('statechange', { detail: { state, previousState } })
+    )
   }
 
   private onOnline() {
@@ -329,7 +332,25 @@ export class ConnectionManager extends Emitter<Events> {
       inactiveDisconnect: false,
       lastConnectionAttempt: performance.now(),
     })
+
+    this.addReconnectListeners()
     this.socket.socket.connect()
+  }
+
+  private addReconnectListeners() {
+    const handleFailure = () => {
+      removeSocketListeners()
+      this.startAutoReconnectCountdown(0)
+    }
+    const handleSuccess = () => {
+      removeSocketListeners()
+    }
+    const removeSocketListeners = () => {
+      this.socket.removeListener('error', handleFailure)
+      this.socket.removeListener('connect', handleSuccess)
+    }
+    this.socket.on('error', handleFailure)
+    this.socket.on('connect', handleSuccess)
   }
 
   private tryReconnectGracefully() {

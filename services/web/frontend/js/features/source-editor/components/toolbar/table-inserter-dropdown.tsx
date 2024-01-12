@@ -57,14 +57,17 @@ export const TableInserterDropdown = memo(() => {
         container={view.dom}
         containerPadding={0}
         animation
+        rootClose
         onHide={() => onToggle(false)}
       >
         <Popover
           id="toolbar-table-menu"
           ref={ref}
-          className="ol-cm-toolbar-button-menu-popover ol-cm-toolbar-table-grid-popover"
+          className="ol-cm-toolbar-button-menu-popover ol-cm-toolbar-button-menu-popover-unstyled"
         >
-          <SizeGrid sizeX={10} sizeY={10} onSizeSelected={onSizeSelected} />
+          <div className="ol-cm-toolbar-table-grid-popover">
+            <SizeGrid sizeX={10} sizeY={10} onSizeSelected={onSizeSelected} />
+          </div>
         </Popover>
       </Overlay>
     </>
