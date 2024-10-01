@@ -1,25 +1,42 @@
+// @ts-check
 'use strict'
 
 const assert = require('check-types').assert
 
 const FileData = require('./')
+const CommentList = require('./comment_list')
+const TrackedChangeList = require('./tracked_change_list')
 
 /**
- * @typedef {import("../types").StringFileRawData} StringFileRawData
+ * @import { StringFileRawData, RawFileData, BlobStore, CommentRawData } from "../types"
+ * @import { TrackedChangeRawData, RangesBlob } from "../types"
+ * @import EditOperation from "../operation/edit_operation"
  */
 
 class StringFileData extends FileData {
   /**
    * @param {string} content
+   * @param {CommentRawData[]} [rawComments]
+   * @param {TrackedChangeRawData[]} [rawTrackedChanges]
    */
-  constructor(content) {
+  constructor(content, rawComments = [], rawTrackedChanges = []) {
     super()
     assert.string(content)
     this.content = content
+    this.comments = CommentList.fromRaw(rawComments)
+    this.trackedChanges = TrackedChangeList.fromRaw(rawTrackedChanges)
   }
 
+  /**
+   * @param {StringFileRawData} raw
+   * @returns {StringFileData}
+   */
   static fromRaw(raw) {
-    return new StringFileData(raw.content)
+    return new StringFileData(
+      raw.content,
+      raw.comments || [],
+      raw.trackedChanges || []
+    )
   }
 
   /**
@@ -27,7 +44,18 @@ class StringFileData extends FileData {
    * @returns {StringFileRawData}
    */
   toRaw() {
-    return { content: this.content }
+    /** @type StringFileRawData */
+    const raw = { content: this.content }
+
+    if (this.comments.length) {
+      raw.comments = this.comments.toRaw()
+    }
+
+    if (this.trackedChanges.length) {
+      raw.trackedChanges = this.trackedChanges.toRaw()
+    }
+
+    return raw
   }
 
   /** @inheritdoc */
@@ -35,9 +63,29 @@ class StringFileData extends FileData {
     return true
   }
 
-  /** @inheritdoc */
-  getContent() {
-    return this.content
+  /**
+   * @inheritdoc
+   * @param {import('../file').FileGetContentOptions} [opts]
+   */
+  getContent(opts = {}) {
+    let content = ''
+    let cursor = 0
+    if (opts.filterTrackedDeletes) {
+      for (const tc of this.trackedChanges.asSorted()) {
+        if (tc.tracking.type !== 'delete') {
+          continue
+        }
+        if (cursor < tc.range.start) {
+          content += this.content.slice(cursor, tc.range.start)
+        }
+        // skip the tracked change
+        cursor = tc.range.end
+      }
+    }
+    if (cursor < this.content.length) {
+      content += this.content.slice(cursor)
+    }
+    return content
   }
 
   /** @inheritdoc */
@@ -50,12 +98,27 @@ class StringFileData extends FileData {
     return this.content.length
   }
 
-  /** @inheritdoc */
-  edit(textOperation) {
-    this.content = textOperation.apply(this.content)
+  /**
+   * @inheritdoc
+   * @param {EditOperation} operation */
+  edit(operation) {
+    operation.apply(this)
   }
 
   /** @inheritdoc */
+  getComments() {
+    return this.comments
+  }
+
+  /** @inheritdoc */
+  getTrackedChanges() {
+    return this.trackedChanges
+  }
+
+  /**
+   * @inheritdoc
+   * @returns {Promise<StringFileData>}
+   */
   async toEager() {
     return this
   }
@@ -65,9 +128,26 @@ class StringFileData extends FileData {
     return FileData.createHollow(this.getByteLength(), this.getStringLength())
   }
 
-  /** @inheritdoc */
+  /**
+   * @inheritdoc
+   * @param {BlobStore} blobStore
+   * @return {Promise<RawFileData>}
+   */
   async store(blobStore) {
     const blob = await blobStore.putString(this.content)
+    if (this.comments.comments.size || this.trackedChanges.length) {
+      /** @type {RangesBlob} */
+      const ranges = {
+        comments: this.getComments().toRaw(),
+        trackedChanges: this.trackedChanges.toRaw(),
+      }
+      const rangesBlob = await blobStore.putObject(ranges)
+      // TODO(das7pad): Provide interface that guarantees hash exists?
+      // @ts-ignore
+      return { hash: blob.getHash(), rangesHash: rangesBlob.getHash() }
+    }
+    // TODO(das7pad): Provide interface that guarantees hash exists?
+    // @ts-ignore
     return { hash: blob.getHash() }
   }
 }

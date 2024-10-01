@@ -234,7 +234,7 @@ templates.confirmEmail = ctaTemplate({
   },
   secondaryMessage() {
     return [
-      'If you did not request this, please let us know at <a href="mailto:support@overleaf.com">support@overleaf.com</a>.',
+      `If you did not request this, please let us know at <a href="mailto:${settings.adminEmail}">${settings.adminEmail}</a>.`,
       `If you have any questions or trouble confirming your email address, please get in touch with our support team at ${settings.adminEmail}.`,
     ]
   },
@@ -257,10 +257,12 @@ templates.confirmCode = NoCTAEmailTemplate({
     return 'Confirm your email address'
   },
   message(opts, isPlainText) {
-    const msg = [
-      `Welcome to Overleaf! We're so glad you joined us.`,
-      'Use this 6-digit confirmation code to finish your setup.',
-    ]
+    const msg = opts.isSecondary
+      ? ['Use this 6-digit code to confirm your email address.']
+      : [
+          `Welcome to Overleaf! We're so glad you joined us.`,
+          'Use this 6-digit confirmation code to finish your setup.',
+        ]
 
     if (isPlainText && opts.confirmCode) {
       msg.push(opts.confirmCode)
@@ -516,29 +518,70 @@ templates.groupSSOLinkingInvite = ctaTemplate({
   },
 })
 
-templates.groupSSODisabled = ctaTemplate({
+templates.groupSSOReauthenticate = ctaTemplate({
   subject(opts) {
-    return `Action required: Set your Overleaf password`
+    return 'Action required: Reauthenticate your Overleaf account'
   },
   title(opts) {
-    return `Single sign-on disabled`
+    return 'Action required: Reauthenticate SSO'
   },
   message(opts) {
     return [
       `Hi,
       <div>
-        Your group administrator has disabled single sign-on for your group.
-      </div>
-      </br>
-      <div>
-        <strong>What does this mean for you?</strong>
-      </div>
-      </br>
-      <div>
-        You now need an email address and password to sign in to your Overleaf account.
+      Single sign-on for your Overleaf group has been updated.
+      This means you need to reauthenticate your Overleaf account with your group’s SSO provider.
       </div>
       `,
     ]
+  },
+  secondaryMessage(opts) {
+    return [``]
+  },
+  ctaURL(opts) {
+    return opts.authenticateWithSSO
+  },
+  ctaText(opts) {
+    return 'Reauthenticate now'
+  },
+  greeting() {
+    return ''
+  },
+})
+
+templates.groupSSODisabled = ctaTemplate({
+  subject(opts) {
+    if (opts.userIsManaged) {
+      return `Action required: Set your Overleaf password`
+    } else {
+      return 'A change to your Overleaf login options'
+    }
+  },
+  title(opts) {
+    return `Single sign-on disabled`
+  },
+  message(opts, isPlainText) {
+    const loginUrl = `${settings.siteUrl}/login`
+    let whatDoesThisMeanExplanation = [
+      `You can still log in to Overleaf using one of our other <a href="${loginUrl}" style="color: #0F7A06; text-decoration: none;">login options</a> or with your email address and password.`,
+      `If you don't have a password, you can set one now.`,
+    ]
+    if (opts.userIsManaged) {
+      whatDoesThisMeanExplanation = [
+        'You now need an email address and password to sign in to your Overleaf account.',
+      ]
+    }
+
+    const message = [
+      'Your group administrator has disabled single sign-on for your group.',
+      '<br/>',
+      '<b>What does this mean for you?</b>',
+      ...whatDoesThisMeanExplanation,
+    ]
+
+    return message.map(m => {
+      return EmailMessageHelper.cleanHTML(m, isPlainText)
+    })
   },
   secondaryMessage(opts) {
     return [``]
@@ -548,9 +591,6 @@ templates.groupSSODisabled = ctaTemplate({
   },
   ctaText(opts) {
     return 'Set your new password'
-  },
-  greeting() {
-    return ''
   },
 })
 
@@ -818,6 +858,87 @@ templates.SAMLDataCleared = ctaTemplate({
   },
   ctaURL(opts) {
     return `${settings.siteUrl}/user/settings`
+  },
+})
+
+templates.welcome = ctaTemplate({
+  subject() {
+    return `Welcome to ${settings.appName}`
+  },
+  title() {
+    return `Welcome to ${settings.appName}`
+  },
+  greeting() {
+    return 'Hi,'
+  },
+  message(opts, isPlainText) {
+    const logInAgainDisplay = EmailMessageHelper.displayLink(
+      'log in again',
+      `${settings.siteUrl}/login`,
+      isPlainText
+    )
+    const helpGuidesDisplay = EmailMessageHelper.displayLink(
+      'Help Guides',
+      `${settings.siteUrl}/learn`,
+      isPlainText
+    )
+    const templatesDisplay = EmailMessageHelper.displayLink(
+      'Templates',
+      `${settings.siteUrl}/templates`,
+      isPlainText
+    )
+
+    return [
+      `Thanks for signing up to ${settings.appName}! If you ever get lost, you can ${logInAgainDisplay} with the email address '${opts.to}'.`,
+      `If you're new to LaTeX, take a look at our ${helpGuidesDisplay} and ${templatesDisplay}.`,
+      `Please also take a moment to confirm your email address for ${settings.appName}:`,
+    ]
+  },
+  secondaryMessage() {
+    return [
+      `PS. We love talking to our users about ${settings.appName}. Reply to this email to get in touch with us directly, whatever the reason. Questions, comments, problems, suggestions, all welcome!`,
+    ]
+  },
+  ctaText() {
+    return 'Confirm Email'
+  },
+  ctaURL(opts) {
+    return opts.confirmEmailUrl
+  },
+})
+
+templates.welcomeWithoutCTA = NoCTAEmailTemplate({
+  subject() {
+    return `Welcome to ${settings.appName}`
+  },
+  title() {
+    return `Welcome to ${settings.appName}`
+  },
+  greeting() {
+    return 'Hi,'
+  },
+  message(opts, isPlainText) {
+    const logInAgainDisplay = EmailMessageHelper.displayLink(
+      'log in again',
+      `${settings.siteUrl}/login`,
+      isPlainText
+    )
+    const helpGuidesDisplay = EmailMessageHelper.displayLink(
+      'Help Guides',
+      `${settings.siteUrl}/learn`,
+      isPlainText
+    )
+    const templatesDisplay = EmailMessageHelper.displayLink(
+      'Templates',
+      `${settings.siteUrl}/templates`,
+      isPlainText
+    )
+
+    return [
+      `Thanks for signing up to ${settings.appName}! If you ever get lost, you can ${logInAgainDisplay} with the email address '${opts.to}'.`,
+      `If you're new to LaTeX, take a look at our ${helpGuidesDisplay} and ${templatesDisplay}.`,
+      `PS. We love talking to our users about ${settings.appName}. Reply to this email to get in touch with us directly, whatever the reason. Questions, comments, problems, suggestions, all welcome!`,
+    ]
   },
 })
 

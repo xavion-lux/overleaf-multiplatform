@@ -29,11 +29,12 @@ describe('SamlLogHandler', function () {
   })
 
   describe('with valid data object', function () {
-    beforeEach(function () {
-      SamlLogHandler.log(
+    beforeEach(async function () {
+      await SamlLogHandler.promises.log(
         {
           session: { saml: { universityId: providerId } },
           sessionID: sessionId,
+          path: '/saml/ukamf',
         },
         data
       )
@@ -54,14 +55,15 @@ describe('SamlLogHandler', function () {
   })
 
   describe('when a json stringify error occurs', function () {
-    beforeEach(function () {
+    beforeEach(async function () {
       const circularRef = {}
       circularRef.circularRef = circularRef
 
-      SamlLogHandler.log(
+      await SamlLogHandler.promises.log(
         {
           session: { saml: { universityId: providerId } },
           sessionID: sessionId,
+          path: '/saml/ukamf',
         },
         circularRef
       )
@@ -81,13 +83,17 @@ describe('SamlLogHandler', function () {
   })
 
   describe('when logging error occurs', function () {
-    beforeEach(function () {
-      samlLog.save = sinon.stub().yields('error')
+    let err
 
-      SamlLogHandler.log(
+    beforeEach(async function () {
+      err = new Error()
+      samlLog.save = sinon.stub().rejects(err)
+
+      await SamlLogHandler.promises.log(
         {
           session: { saml: { universityId: providerId } },
           sessionID: sessionId,
+          path: '/saml/ukamf',
         },
         data
       )
@@ -95,9 +101,62 @@ describe('SamlLogHandler', function () {
 
     it('should log error', function () {
       this.logger.error.should.have.been.calledOnce.and.calledWithMatch(
-        { err: 'error', providerId, sessionId: sessionId.substr(0, 8) },
+        {
+          err,
+          sessionId: sessionId.substr(0, 8),
+        },
         'SamlLog Error'
       )
+    })
+  })
+
+  describe('with /saml/group-sso path', function () {
+    let err
+
+    beforeEach(async function () {
+      err = new Error()
+      samlLog.save = sinon.stub().rejects(err)
+
+      await SamlLogHandler.promises.log(
+        {
+          session: { saml: { universityId: providerId } },
+          sessionID: sessionId,
+          path: '/saml/group-sso',
+        },
+        data
+      )
+    })
+
+    it('should log error', function () {
+      this.logger.error.should.have.been.calledOnce.and.calledWithMatch(
+        {
+          err,
+          sessionId: sessionId.substr(0, 8),
+        },
+        'SamlLog Error'
+      )
+    })
+  })
+
+  describe('with a path not in the allow list', function () {
+    let err
+
+    beforeEach(async function () {
+      err = new Error()
+      samlLog.save = sinon.stub().rejects(err)
+
+      await SamlLogHandler.promises.log(
+        {
+          session: { saml: { universityId: providerId } },
+          sessionID: sessionId,
+          path: '/unsupported',
+        },
+        data
+      )
+    })
+
+    it('should not log any error', function () {
+      this.logger.error.should.not.have.been.called
     })
   })
 })

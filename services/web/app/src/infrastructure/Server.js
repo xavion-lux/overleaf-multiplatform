@@ -9,14 +9,15 @@ const Router = require('../router')
 const helmet = require('helmet')
 const UserSessionsRedis = require('../Features/User/UserSessionsRedis')
 const Csrf = require('./Csrf')
+const HttpPermissionsPolicyMiddleware = require('./HttpPermissionsPolicy')
 
 const sessionsRedisClient = UserSessionsRedis.client()
 
 const SessionAutostartMiddleware = require('./SessionAutostartMiddleware')
-const SessionStoreManager = require('./SessionStoreManager')
 const AnalyticsManager = require('../Features/Analytics/AnalyticsManager')
 const session = require('express-session')
-const RedisStore = require('connect-redis')(session)
+const CookieMetrics = require('./CookieMetrics')
+const CustomSessionStore = require('./CustomSessionStore')
 const bodyParser = require('./BodyParserWrapper')
 const methodOverride = require('method-override')
 const cookieParser = require('cookie-parser')
@@ -49,7 +50,7 @@ const STATIC_CACHE_AGE = Settings.cacheStaticAssets
   : 0
 
 // Init the session store
-const sessionStore = new RedisStore({ client: sessionsRedisClient })
+const sessionStore = new CustomSessionStore({ client: sessionsRedisClient })
 
 const app = express()
 
@@ -128,11 +129,22 @@ webRouter.use(
 )
 app.set('views', Path.join(__dirname, '/../../views'))
 app.set('view engine', 'pug')
-Modules.loadViewIncludes(app)
+
+if (Settings.enabledServices.includes('web')) {
+  if (app.get('env') !== 'development') {
+    logger.debug('enabling view cache for production or acceptance tests')
+    app.enable('view cache')
+  }
+  if (Settings.precompilePugTemplatesAtBootTime) {
+    logger.debug('precompiling views for web in production environment')
+    Views.precompileViews(app)
+  }
+  Modules.loadViewIncludes(app)
+}
 
 app.use(metrics.http.monitor(logger))
 
-Modules.registerAppMiddleware(app)
+Modules.applyMiddleware(app, 'appMiddleware')
 app.use(bodyParser.urlencoded({ extended: true, limit: '2mb' }))
 app.use(bodyParser.json({ limit: Settings.max_json_request_size }))
 app.use(methodOverride())
@@ -143,15 +155,38 @@ if (Settings.blockCrossOriginRequests) {
   app.use(Csrf.blockCrossOriginRequests())
 }
 
+if (Settings.useHttpPermissionsPolicy) {
+  const httpPermissionsPolicy = new HttpPermissionsPolicyMiddleware(
+    Settings.httpPermissions
+  )
+  logger.debug('adding permissions policy config', Settings.httpPermissions)
+
+  webRouter.use(httpPermissionsPolicy.middleware)
+}
+
 RedirectManager.apply(webRouter)
 
-webRouter.use(cookieParser(Settings.security.sessionSecret))
+if (!Settings.security.sessionSecret) {
+  throw new Error('No SESSION_SECRET provided.')
+}
+
+const sessionSecrets = [
+  Settings.security.sessionSecret,
+  Settings.security.sessionSecretUpcoming,
+  Settings.security.sessionSecretFallback,
+].filter(Boolean)
+
+webRouter.use(cookieParser(sessionSecrets))
+webRouter.use(CookieMetrics.middleware)
 SessionAutostartMiddleware.applyInitialMiddleware(webRouter)
+Modules.applyMiddleware(webRouter, 'sessionMiddleware', {
+  store: sessionStore,
+})
 webRouter.use(
   session({
     resave: false,
     saveUninitialized: false,
-    secret: Settings.security.sessionSecret,
+    secret: sessionSecrets,
     proxy: Settings.behindProxy,
     cookie: {
       domain: Settings.cookieDomain,
@@ -167,11 +202,6 @@ webRouter.use(
 if (Features.hasFeature('saas')) {
   webRouter.use(AnalyticsManager.analyticsIdMiddleware)
 }
-
-// patch the session store to generate a validation token for every new session
-SessionStoreManager.enableValidationToken(sessionStore)
-// use middleware to reject all requests with invalid tokens
-webRouter.use(SessionStoreManager.validationMiddleware)
 
 // passport
 webRouter.use(passport.initialize())
@@ -266,6 +296,19 @@ webRouter.use(function addNoCacheHeader(req, res, next) {
     // don't set no-cache headers on a project file, as it's immutable and can be cached (privately)
     return next()
   }
+  const isProjectBlob = /^\/project\/[a-f0-9]{24}\/blob\/[a-f0-9]{40}$/.test(
+    req.path
+  )
+  if (isProjectBlob) {
+    // don't set no-cache headers on a project blobs, as they are immutable and can be cached (privately)
+    return next()
+  }
+
+  const isWikiContent = /^\/learn(-scripts)?(\/|$)/i.test(req.path)
+  if (isWikiContent) {
+    // don't set no-cache headers on wiki content, as it's immutable and can be cached (publicly)
+    return next()
+  }
 
   const isLoggedIn = SessionManager.isUserLoggedIn(req.session)
   if (isLoggedIn) {
@@ -315,16 +358,6 @@ if (Settings.enabledServices.includes('api')) {
 
 if (Settings.enabledServices.includes('web')) {
   logger.debug('providing web router')
-
-  if (Settings.precompilePugTemplatesAtBootTime) {
-    logger.debug('precompiling views for web in production environment')
-    Views.precompileViews(app)
-  }
-  if (app.get('env') === 'test') {
-    logger.debug('enabling view cache for acceptance tests')
-    app.enable('view cache')
-  }
-
   app.use(publicApiRouter) // public API goes with web router for public access
   app.use(Validation.errorMiddleware)
   app.use(ErrorController.handleApiError)

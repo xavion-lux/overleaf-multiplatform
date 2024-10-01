@@ -14,6 +14,7 @@ const EmailHandler = require('../Email/EmailHandler')
 const { RateLimiter } = require('../../infrastructure/RateLimiter')
 const Modules = require('../../infrastructure/Modules')
 const UserAuditLogHandler = require('../User/UserAuditLogHandler')
+const SplitTestHandler = require('../SplitTests/SplitTestHandler')
 
 const rateLimiters = {
   resendGroupInvite: new RateLimiter('resend-group-invite', {
@@ -66,9 +67,15 @@ async function viewInvite(req, res, next) {
   const { token } = req.params
   const userId = SessionManager.getLoggedInUserId(req.session)
 
-  const { invite, subscription } = await TeamInvitesHandler.promises.getInvite(
-    token
+  const { invite, subscription } =
+    await TeamInvitesHandler.promises.getInvite(token)
+
+  await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'bootstrap-5-subscription'
   )
+
   if (!invite) {
     return ErrorController.notFound(req, res)
   }
@@ -91,6 +98,7 @@ async function viewInvite(req, res, next) {
 
     if (subscription?.groupPolicy) {
       if (!subscription.populated('groupPolicy')) {
+        // eslint-disable-next-line no-restricted-syntax
         await subscription.populate('groupPolicy')
       }
 
@@ -149,7 +157,6 @@ async function viewInvite(req, res, next) {
         inviterName: invite.inviterName,
         inviteToken: invite.token,
         hasIndividualRecurlySubscription,
-        appName: settings.appName,
         expired: req.query.expired,
         userRestrictions: Array.from(req.userRestrictions || []),
         currentManagedUserAdminEmail,
@@ -180,6 +187,12 @@ async function viewInvites(req, res, next) {
 
   const teamInvites = groupSubscriptions.map(groupSubscription =>
     groupSubscription.teamInvites.find(invite => invite.email === userEmail)
+  )
+
+  await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'bootstrap-5-subscription'
   )
 
   return res.render('subscriptions/team/group-invites', {
@@ -264,7 +277,9 @@ async function resendInvite(req, res, next) {
   }
 
   try {
-    await rateLimiters.resendGroupInvite.consume(userEmail)
+    await rateLimiters.resendGroupInvite.consume(userEmail, 1, {
+      method: 'email',
+    })
 
     const existingUser = await UserGetter.promises.getUserByAnyEmail(userEmail)
 

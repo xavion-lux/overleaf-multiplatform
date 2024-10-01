@@ -6,7 +6,7 @@ volumes:
 services:
 
   test_unit:
-    image: node:18.18.2
+    image: node:18.20.2
     volumes:
       - .:/overleaf/services/web
       - ../../node_modules:/overleaf/node_modules
@@ -14,14 +14,14 @@ services:
     working_dir: /overleaf/services/web
     environment:
       BASE_CONFIG:
-      SHARELATEX_CONFIG:
+      OVERLEAF_CONFIG:
       MOCHA_GREP: ${MOCHA_GREP}
       NODE_OPTIONS: "--unhandled-rejections=strict"
     command: npm run --silent test:unit:app
     user: node
 
   test_acceptance:
-    image: node:18.18.2
+    image: node:18.20.2
     volumes:
       - .:/overleaf/services/web
       - ../../node_modules:/overleaf/node_modules
@@ -31,11 +31,11 @@ services:
     env_file: docker-compose.common.env
     environment:
       BASE_CONFIG:
-      SHARELATEX_CONFIG:
+      OVERLEAF_CONFIG:
       MOCHA_GREP: ${MOCHA_GREP}
       MONGO_SERVER_SELECTION_TIMEOUT: 600000
       MONGO_SOCKET_TIMEOUT: 300000
-      # SHARELATEX_ALLOW_ANONYMOUS_READ_AND_WRITE_SHARING: 'true'
+      # OVERLEAF_ALLOW_ANONYMOUS_READ_AND_WRITE_SHARING: 'true'
 
     extra_hosts:
       - 'www.overleaf.test:127.0.0.1'
@@ -64,12 +64,14 @@ services:
     user: node
 
   test_frontend_ct:
-    image: cypress/included:13.3.3
+    image: cypress/included:13.13.2
     volumes:
       - ../../:/overleaf
     working_dir: /overleaf/services/web
     environment:
       VERBOSE_LOGGING:
+      CYPRESS_SPEC_PATTERN: ${CYPRESS_SPEC_PATTERN:-}
+      CYPRESS_EXCLUDE_SPEC_PATTERN: ${CYPRESS_EXCLUDE_SPEC_PATTERN:-}
     entrypoint: npm
     command:
       - "run"
@@ -79,7 +81,7 @@ services:
     image: redis
 
   mongo:
-    image: mongo:5.0.17
+    image: mongo:6.0.13
     command: --replSet overleaf
 
   ldap:
@@ -96,5 +98,5 @@ services:
       image: us-east1-docker.pkg.dev/overleaf-ops/ol-docker/saml-test
       environment:
           SAML_BASE_URL_PATH: 'http://saml/simplesaml/'
-          SAML_TEST_SP_ENTITY_ID: 'sharelatex-test-saml'
+          SAML_TEST_SP_ENTITY_ID: 'overleaf-test-saml'
           SAML_TEST_SP_LOCATION: 'http://www.overleaf.test:23000/saml/callback'

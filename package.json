@@ -2,21 +2,34 @@
   "name": "overleaf",
   "private": true,
   "dependencies": {
-    "patch-package": "^6.4.7"
+    "patch-package": "^8.0.0"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^8.15.0",
     "eslint-config-prettier": "^8.5.0",
     "eslint-config-standard": "^17.0.0",
     "eslint-plugin-chai-expect": "^3.0.0",
     "eslint-plugin-chai-friendly": "^0.7.2",
+    "eslint-plugin-cypress": "^2.15.1",
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-mocha": "^10.1.0",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^4.0.0",
     "eslint-plugin-promise": "^6.0.0",
-    "prettier": "2.5.1",
-    "typescript": "^5.0.4"
+    "prettier": "3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "overrides": {
+    "google-gax": {
+      "protobufjs": "^7.2.5"
+    },
+    "swagger-tools": {
+      "multer": "1.4.5-lts.1",
+      "qs": "6.13.0"
+    }
   },
   "scripts": {
     "format": "prettier --list-different $PWD/'**/*.js'",

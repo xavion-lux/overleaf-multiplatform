@@ -170,10 +170,11 @@ _mocks._countAndProcessUpdates = (
           _processUpdatesBatch(projectId, updates, extendLock, cb)
         },
         error => {
-          if (error) {
-            return callback(error)
-          }
-          callback(null, queueSize)
+          // Unconventional callback signature. The caller needs the queue size
+          // even when an error is thrown in order to record the queue size in
+          // the projectHistoryFailures collection. We'll have to find another
+          // way to achieve this when we promisify.
+          callback(error, queueSize)
         }
       )
     } else {
@@ -237,7 +238,7 @@ export function _getHistoryId(projectId, updates, callback) {
     }
   }
 
-  WebApiManager.getHistoryId(projectId, (error, idFromWeb, cached) => {
+  WebApiManager.getHistoryId(projectId, (error, idFromWeb) => {
     if (error != null && idFromUpdates != null) {
       // present only on updates
       // 404s from web are an error
@@ -266,7 +267,6 @@ export function _getHistoryId(projectId, updates, callback) {
           projectId,
           idFromWeb,
           idFromUpdates,
-          idWasCached: cached,
           updates,
         },
         'inconsistent project history id between updates and web'
@@ -408,15 +408,12 @@ function _processUpdates(
                 )
               },
               (updatesWithBlobs, cb) => {
-                cb = profile.wrap('convertToChanges', cb)
-                UpdateTranslator.convertToChanges(
+                const changes = UpdateTranslator.convertToChanges(
                   projectId,
-                  updatesWithBlobs,
-                  cb
-                )
-              },
-              (changes, cb) => {
-                changes = changes.map(change => change.toRaw())
+                  updatesWithBlobs
+                ).map(change => change.toRaw())
+                profile.log('convertToChanges')
+
                 let change
                 const numChanges = changes.length
                 const byteLength = Buffer.byteLength(

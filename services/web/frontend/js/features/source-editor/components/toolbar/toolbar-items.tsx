@@ -1,20 +1,17 @@
-import { FC, memo, useCallback } from 'react'
-import { EditorSelection, EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { FC, memo } from 'react'
+import { EditorState } from '@codemirror/state'
 import { useEditorContext } from '../../../../shared/context/editor-context'
-import useScopeEventEmitter from '../../../../shared/hooks/use-scope-event-emitter'
-import { useLayoutContext } from '../../../../shared/context/layout-context'
-import { withinFormattingCommand } from '../../utils/tree-operations/ancestors'
 import { ToolbarButton } from './toolbar-button'
 import { redo, undo } from '@codemirror/commands'
 import * as commands from '../../extensions/toolbar/commands'
 import { SectionHeadingDropdown } from './section-heading-dropdown'
-import { canAddComment } from '../../extensions/toolbar/comments'
 import getMeta from '../../../../utils/meta'
 import { InsertFigureDropdown } from './insert-figure-dropdown'
 import { useTranslation } from 'react-i18next'
 import { MathDropdown } from './math-dropdown'
 import { TableInserterDropdown } from './table-inserter-dropdown'
+import { withinFormattingCommand } from '@/features/source-editor/utils/tree-operations/formatting'
+import { bsVersion } from '@/features/utils/bootstrap-5'
 
 const isMac = /Mac/.test(window.navigator?.platform)
 
@@ -34,22 +31,6 @@ export const ToolbarItems: FC<{
   const { t } = useTranslation()
   const { toggleSymbolPalette, showSymbolPalette } = useEditorContext()
   const isActive = withinFormattingCommand(state)
-  const addCommentEmitter = useScopeEventEmitter('comment:start_adding')
-  const { setReviewPanelOpen } = useLayoutContext()
-  const addComment = useCallback(
-    (view: EditorView) => {
-      const range = view.state.selection.main
-      if (range.empty) {
-        const line = view.state.doc.lineAt(range.head)
-        view.dispatch({
-          selection: EditorSelection.range(line.from, line.to),
-        })
-      }
-      setReviewPanelOpen(true)
-      addCommentEmitter()
-    },
-    [addCommentEmitter, setReviewPanelOpen]
-  )
 
   const symbolPaletteAvailable = getMeta('ol-symbolPaletteAvailable')
   const showGroup = (group: string) => !overflowed || overflowed.has(group)
@@ -57,19 +38,22 @@ export const ToolbarItems: FC<{
   return (
     <>
       {showGroup('group-history') && (
-        <div className="ol-cm-toolbar-button-group">
+        <div
+          className="ol-cm-toolbar-button-group"
+          aria-label={t('toolbar_undo_redo_actions')}
+        >
           <ToolbarButton
             id="toolbar-undo"
             label={t('toolbar_undo')}
             command={undo}
-            icon="undo"
+            icon={bsVersion({ bs5: 'undo', bs3: 'undo' }) as string}
             shortcut={isMac ? '⌘Z' : 'Ctrl+Z'}
           />
           <ToolbarButton
             id="toolbar-redo"
             label={t('toolbar_redo')}
             command={redo}
-            icon="repeat"
+            icon={bsVersion({ bs5: 'redo', bs3: 'repeat' }) as string}
             shortcut={isMac ? '⇧⌘Z' : 'Ctrl+Y'}
           />
         </div>
@@ -80,18 +64,22 @@ export const ToolbarItems: FC<{
             <div
               className="ol-cm-toolbar-button-group"
               data-overflow="group-section"
+              aria-label={t('toolbar_text_formatting')}
             >
               <SectionHeadingDropdown />
             </div>
           )}
           {showGroup('group-format') && (
-            <div className="ol-cm-toolbar-button-group">
+            <div
+              className="ol-cm-toolbar-button-group"
+              aria-label={t('toolbar_text_style')}
+            >
               <ToolbarButton
                 id="toolbar-format-bold"
                 label={t('toolbar_format_bold')}
                 command={commands.toggleBold}
                 active={isActive('\\textbf')}
-                icon="bold"
+                icon={bsVersion({ bs5: 'format_bold', bs3: 'bold' }) as string}
                 shortcut={isMac ? '⌘B' : 'Ctrl+B'}
               />
               <ToolbarButton
@@ -99,7 +87,9 @@ export const ToolbarItems: FC<{
                 label={t('toolbar_format_italic')}
                 command={commands.toggleItalic}
                 active={isActive('\\textit')}
-                icon="italic"
+                icon={
+                  bsVersion({ bs5: 'format_italic', bs3: 'italic' }) as string
+                }
                 shortcut={isMac ? '⌘I' : 'Ctrl+I'}
               />
             </div>
@@ -108,6 +98,7 @@ export const ToolbarItems: FC<{
             <div
               className="ol-cm-toolbar-button-group"
               data-overflow="group-math"
+              aria-label={t('toolbar_insert_math_and_symbols')}
             >
               <MathDropdown />
               {symbolPaletteAvailable && (
@@ -127,32 +118,25 @@ export const ToolbarItems: FC<{
             <div
               className="ol-cm-toolbar-button-group"
               data-overflow="group-misc"
+              aria-label={t('toolbar_insert_misc')}
             >
               <ToolbarButton
                 id="toolbar-href"
                 label={t('toolbar_insert_link')}
                 command={commands.wrapInHref}
-                icon="link"
+                icon={bsVersion({ bs5: 'link', bs3: 'link' }) as string}
               />
               <ToolbarButton
                 id="toolbar-ref"
                 label={t('toolbar_insert_cross_reference')}
                 command={commands.insertRef}
-                icon="tag"
+                icon={bsVersion({ bs5: 'sell', bs3: 'tag' }) as string}
               />
               <ToolbarButton
                 id="toolbar-cite"
                 label={t('toolbar_insert_citation')}
                 command={commands.insertCite}
-                icon="book"
-              />
-              <ToolbarButton
-                id="toolbar-add-comment"
-                label={t('toolbar_add_comment')}
-                command={addComment}
-                disabled={!canAddComment(state)}
-                icon="comment"
-                hidden // enable this if an alternative to the floating "Add Comment" button is needed
+                icon={bsVersion({ bs5: 'menu_book', bs3: 'book' }) as string}
               />
               <InsertFigureDropdown />
               <TableInserterDropdown />
@@ -162,24 +146,40 @@ export const ToolbarItems: FC<{
             <div
               className="ol-cm-toolbar-button-group"
               data-overflow="group-list"
+              aria-label={t('toolbar_list_indentation')}
             >
               <ToolbarButton
                 id="toolbar-bullet-list"
                 label={t('toolbar_bullet_list')}
                 command={commands.toggleBulletList}
-                icon="list-ul"
+                icon={
+                  bsVersion({
+                    bs5: 'format_list_bulleted',
+                    bs3: 'list-ul',
+                  }) as string
+                }
               />
               <ToolbarButton
                 id="toolbar-numbered-list"
                 label={t('toolbar_numbered_list')}
                 command={commands.toggleNumberedList}
-                icon="list-ol"
+                icon={
+                  bsVersion({
+                    bs5: 'format_list_numbered',
+                    bs3: 'list-ol',
+                  }) as string
+                }
               />
               <ToolbarButton
                 id="toolbar-format-indent-decrease"
                 label={t('toolbar_decrease_indent')}
                 command={commands.indentDecrease}
-                icon="outdent"
+                icon={
+                  bsVersion({
+                    bs5: 'format_indent_decrease',
+                    bs3: 'outdent',
+                  }) as string
+                }
                 shortcut={visual ? (isMac ? '⌘[' : 'Ctrl+[') : undefined}
                 disabled={listDepth < 2}
               />
@@ -187,7 +187,12 @@ export const ToolbarItems: FC<{
                 id="toolbar-format-indent-increase"
                 label={t('toolbar_increase_indent')}
                 command={commands.indentIncrease}
-                icon="indent"
+                icon={
+                  bsVersion({
+                    bs5: 'format_indent_increase',
+                    bs3: 'indent',
+                  }) as string
+                }
                 shortcut={visual ? (isMac ? '⌘]' : 'Ctrl+]') : undefined}
                 disabled={listDepth < 1}
               />

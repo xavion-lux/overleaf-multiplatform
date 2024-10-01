@@ -4,7 +4,7 @@ const { expect } = require('chai')
 const modulePath =
   '../../../../app/src/Features/Subscription/TeamInvitesHandler'
 
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const Errors = require('../../../../app/src/Features/Errors/Errors')
 
 describe('TeamInvitesHandler', function () {
@@ -111,7 +111,7 @@ describe('TeamInvitesHandler', function () {
 
     this.TeamInvitesHandler = SandboxedModule.require(modulePath, {
       requires: {
-        mongodb: { ObjectId },
+        'mongodb-legacy': { ObjectId },
         crypto: this.crypto,
         '@overleaf/settings': { siteUrl: 'http://example.com' },
         '../../models/TeamInvite': { TeamInvite: (this.TeamInvite = {}) },
@@ -254,6 +254,45 @@ describe('TeamInvitesHandler', function () {
           expect(invite.first_name).to.eq(this.manager.first_name)
           expect(invite.last_name).to.eq(this.manager.last_name)
           expect(invite.invite).to.be.false
+          done(err)
+        }
+      )
+    })
+
+    it('sends an SSO invite if SSO is enabled and inviting self', function (done) {
+      this.subscription.ssoConfig = new ObjectId('abc123abc123abc123abc123')
+      this.SSOConfig.findById
+        .withArgs(this.subscription.ssoConfig)
+        .resolves({ enabled: true })
+
+      this.TeamInvitesHandler.createInvite(
+        this.manager._id,
+        this.subscription,
+        this.manager.email,
+        (err, invite) => {
+          sinon.assert.calledWith(
+            this.Modules.promises.hooks.fire,
+            'sendGroupSSOReminder',
+            this.manager._id,
+            this.subscription._id
+          )
+          done(err)
+        }
+      )
+    })
+
+    it('does not send an SSO invite if SSO is disabled and inviting self', function (done) {
+      this.subscription.ssoConfig = new ObjectId('abc123abc123abc123abc123')
+      this.SSOConfig.findById
+        .withArgs(this.subscription.ssoConfig)
+        .resolves({ enabled: false })
+
+      this.TeamInvitesHandler.createInvite(
+        this.manager._id,
+        this.subscription,
+        this.manager.email,
+        (err, invite) => {
+          sinon.assert.notCalled(this.Modules.promises.hooks.fire)
           done(err)
         }
       )

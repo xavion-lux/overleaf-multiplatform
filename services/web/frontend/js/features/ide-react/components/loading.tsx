@@ -4,6 +4,7 @@ import useWaitForI18n from '@/shared/hooks/use-wait-for-i18n'
 import getMeta from '@/utils/meta'
 import { useConnectionContext } from '../context/connection-context'
 import { useIdeReactContext } from '@/features/ide-react/context/ide-react-context'
+import { LoadingError } from './loading-error'
 
 type Part = 'initial' | 'render' | 'connection' | 'translations' | 'project'
 
@@ -54,21 +55,6 @@ export const Loading: FC<{
     }
   }, [projectJoined])
 
-  const LoadingScreenError = () => {
-    if (connectionState.error) {
-      // NOTE: translations not ready yet
-      return connectionState.error === 'io-not-loaded'
-        ? 'Could not connect to websocket server :('
-        : connectionState.error
-    }
-
-    if (i18n.error) {
-      return getMeta('ol-translationLoadErrorMessage')
-    }
-
-    return ''
-  }
-
   // Use loading text from the server, because i18n will not be ready initially
   const label = getMeta('ol-loadingText')
 
@@ -83,7 +69,10 @@ export const Loading: FC<{
       />
       {hasError && (
         <p className="loading-screen-error">
-          <LoadingScreenError />
+          <LoadingError
+            connectionStateError={connectionState.error}
+            i18nError={i18n.error}
+          />
         </p>
       )}
     </div>

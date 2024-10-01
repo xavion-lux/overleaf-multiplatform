@@ -1,4 +1,4 @@
-const { Gauge } = require('prom-client')
+const { Gauge, Summary } = require('prom-client')
 
 function monitor(mongoClient) {
   const labelNames = ['mongo_server']
@@ -25,6 +25,35 @@ function monitor(mongoClient) {
     labelNames,
   })
 
+  const mongoCommandTimer = new Summary({
+    name: 'mongo_command_time',
+    help: 'time taken to complete a mongo command',
+    percentiles: [],
+    labelNames: ['status', 'method'],
+  })
+
+  if (mongoClient.on) {
+    mongoClient.on('commandSucceeded', event => {
+      mongoCommandTimer.observe(
+        {
+          status: 'success',
+          method: event.commandName === 'find' ? 'read' : 'write',
+        },
+        event.duration
+      )
+    })
+
+    mongoClient.on('commandFailed', event => {
+      mongoCommandTimer.observe(
+        {
+          status: 'failed',
+          method: event.commandName === 'find' ? 'read' : 'write',
+        },
+        event.duration
+      )
+    })
+  }
+
   function collect() {
     // Reset all gauges in case they contain values for servers that
     // disappeared
@@ -36,7 +65,8 @@ function monitor(mongoClient) {
     const servers = mongoClient.topology?.s?.servers
     if (servers != null) {
       for (const [address, server] of servers) {
-        const pool = server.s?.pool
+        // The server object is different between v4 and v5 (c.f. https://github.com/mongodb/node-mongodb-native/pull/3645)
+        const pool = server.s?.pool || server.pool
         if (pool == null) {
           continue
         }

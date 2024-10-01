@@ -6,12 +6,11 @@ import { useProjectSettingsContext } from '../../context/project-settings-contex
 import SettingsMenuSelect from './settings-menu-select'
 import type { Option } from './settings-menu-select'
 import { useFileTreeData } from '@/shared/context/file-tree-data-context'
-import { MainDocument } from '../../../../../../types/project-settings'
 
 export default function SettingsDocument() {
   const { t } = useTranslation()
   const { permissionsLevel } = useEditorContext()
-  const docs: MainDocument[] = useFileTreeData().docs
+  const { docs } = useFileTreeData()
   const { rootDocId, setRootDocId } = useProjectSettingsContext()
 
   const validDocsOptions = useMemo(() => {
@@ -25,17 +24,22 @@ export default function SettingsDocument() {
       label: doc.path,
     }))
 
+    if (!rootDocId) {
+      mappedDocs.unshift({
+        value: '',
+        label: 'None',
+        disabled: true,
+      })
+    }
+
     return mappedDocs
   }, [docs, rootDocId])
-
-  if (permissionsLevel === 'readOnly') {
-    return null
-  }
 
   return (
     <SettingsMenuSelect
       onChange={setRootDocId}
-      value={rootDocId}
+      value={rootDocId ?? ''}
+      disabled={permissionsLevel === 'readOnly'}
       options={validDocsOptions}
       label={t('main_document')}
       name="rootDocId"

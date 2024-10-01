@@ -39,6 +39,19 @@ app.use(function (req, res, next) {
   next()
 })
 
+// Handle requests that come in after we've started shutting down
+app.use((req, res, next) => {
+  if (settings.shuttingDown) {
+    logger.warn(
+      { req, timeSinceShutdown: Date.now() - settings.shutDownTime },
+      'request received after shutting down'
+    )
+    // We don't want keep-alive connections to be kept open when the server is shutting down.
+    res.set('Connection', 'close')
+  }
+  next()
+})
+
 Metrics.injectMetricsRoute(app)
 
 app.head(
@@ -73,6 +86,12 @@ app.delete(
   fileController.deleteProject
 )
 
+app.get(
+  '/project/:project_id/size',
+  keyBuilder.userProjectKeyMiddleware,
+  fileController.directorySize
+)
+
 app.head(
   '/template/:template_id/v/:version/:format',
   keyBuilder.templateFileKeyMiddleware,
@@ -94,39 +113,6 @@ app.post(
   fileController.insertFile
 )
 
-app.head(
-  '/project/:project_id/public/:public_file_id',
-  keyBuilder.publicFileKeyMiddleware,
-  fileController.getFileHead
-)
-app.get(
-  '/project/:project_id/public/:public_file_id',
-  keyBuilder.publicFileKeyMiddleware,
-  fileController.getFile
-)
-app.post(
-  '/project/:project_id/public/:public_file_id',
-  keyBuilder.publicFileKeyMiddleware,
-  fileController.insertFile
-)
-app.put(
-  '/project/:project_id/public/:public_file_id',
-  keyBuilder.publicFileKeyMiddleware,
-  bodyParser.json(),
-  fileController.copyFile
-)
-app.delete(
-  '/project/:project_id/public/:public_file_id',
-  keyBuilder.publicFileKeyMiddleware,
-  fileController.deleteFile
-)
-
-app.get(
-  '/project/:project_id/size',
-  keyBuilder.publicProjectKeyMiddleware,
-  fileController.directorySize
-)
-
 app.get(
   '/bucket/:bucket/key/*',
   keyBuilder.bucketFileKeyMiddleware,
@@ -134,7 +120,11 @@ app.get(
 )
 
 app.get('/status', function (req, res) {
-  res.send('filestore sharelatex up')
+  if (settings.shuttingDown) {
+    res.sendStatus(503) // Service unavailable
+  } else {
+    res.send('filestore is up')
+  }
 })
 
 app.get('/health_check', healthCheckController.check)
@@ -144,11 +134,12 @@ app.use(RequestLogger.errorHandler)
 const port = settings.internal.filestore.port || 3009
 const host = settings.internal.filestore.host || '0.0.0.0'
 
+let server = null
 if (!module.parent) {
   // Called directly
-  app.listen(port, host, error => {
+  server = app.listen(port, host, error => {
     if (error) {
-      logger.error('Error starting Filestore', error)
+      logger.error({ err: error }, 'Error starting Filestore')
       throw error
     }
     logger.debug(`Filestore starting up, listening on ${host}:${port}`)
@@ -163,5 +154,33 @@ process
     logger.err(err, 'Uncaught Exception thrown')
     process.exit(1)
   })
+
+function handleShutdownSignal(signal) {
+  logger.info({ signal }, 'received interrupt, cleaning up')
+  if (settings.shuttingDown) {
+    logger.warn({ signal }, 'already shutting down, ignoring interrupt')
+    return
+  }
+  settings.shuttingDown = true
+  settings.shutDownTime = Date.now()
+  // stop accepting new connections, the callback is called when existing connections have finished
+  server.close(() => {
+    logger.info({ signal }, 'server closed')
+    process.exit()
+  })
+  // close idle http keep-alive connections
+  server.closeIdleConnections()
+  setTimeout(() => {
+    logger.info({ signal }, 'shutdown timed out, exiting')
+    // close all connections immediately
+    server.closeAllConnections()
+    // exit after a short delay to allow for cleanup
+    setTimeout(() => {
+      process.exit()
+    }, 100)
+  }, settings.delayShutdownMs)
+}
+
+process.on('SIGTERM', handleShutdownSignal)
 
 module.exports = app

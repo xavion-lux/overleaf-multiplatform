@@ -1,7 +1,7 @@
 const sinon = require('sinon')
 const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const Crypto = require('crypto')
 
 const MODULE_PATH =
@@ -39,8 +39,32 @@ describe('CollaboratorsInviteHandler', function () {
       },
     }
     this.UserGetter = { promises: { getUser: sinon.stub() } }
-    this.ProjectGetter = { promises: {} }
+    this.ProjectGetter = { promises: { getProject: sinon.stub().resolves() } }
     this.NotificationsBuilder = { promises: {} }
+    this.tokenHmac = 'jkhajkefhaekjfhkfg'
+    this.CollaboratorsInviteHelper = {
+      generateToken: sinon.stub().returns(this.Crypto.randomBytes(24)),
+      hashInviteToken: sinon.stub().returns(this.tokenHmac),
+    }
+
+    this.SplitTestHandler = {
+      promises: {
+        getAssignmentForUser: sinon.stub().resolves(),
+      },
+    }
+
+    this.LimitationsManager = {
+      promises: {
+        canAcceptEditCollaboratorInvite: sinon.stub().resolves(),
+      },
+    }
+
+    this.ProjectAuditLogHandler = {
+      promises: {
+        addEntry: sinon.stub().resolves(),
+      },
+      addEntryInBackground: sinon.stub(),
+    }
 
     this.CollaboratorsInviteHandler = SandboxedModule.require(MODULE_PATH, {
       requires: {
@@ -51,7 +75,11 @@ describe('CollaboratorsInviteHandler', function () {
         '../User/UserGetter': this.UserGetter,
         '../Project/ProjectGetter': this.ProjectGetter,
         '../Notifications/NotificationsBuilder': this.NotificationsBuilder,
-        crypto: this.Crypto,
+        './CollaboratorsInviteHelper': this.CollaboratorsInviteHelper,
+        '../SplitTests/SplitTestHandler': this.SplitTestHandler,
+        '../Subscription/LimitationsManager': this.LimitationsManager,
+        '../Project/ProjectAuditLogHandler': this.ProjectAuditLogHandler,
+        crypto: this.CryptogetAssignmentForUser,
       },
     })
 
@@ -74,6 +102,7 @@ describe('CollaboratorsInviteHandler', function () {
       _id: this.inviteId,
       email: this.email,
       token: this.token,
+      tokenHmac: this.tokenHmac,
       sendingUserId: this.sendingUserId,
       projectId: this.projectId,
       privileges: this.privileges,
@@ -81,86 +110,17 @@ describe('CollaboratorsInviteHandler', function () {
     }
   })
 
-  describe('getInviteCount', function () {
-    beforeEach(function () {
-      this.ProjectInvite.countDocuments.returns({
-        exec: sinon.stub().resolves(2),
-      })
-      this.call = async () => {
-        return await this.CollaboratorsInviteHandler.promises.getInviteCount(
-          this.projectId
-        )
-      }
-    })
-
-    it('should produce the count of documents', async function () {
-      const count = await this.call()
-      expect(count).to.equal(2)
-    })
-
-    describe('when model.countDocuments produces an error', function () {
-      beforeEach(function () {
-        this.ProjectInvite.countDocuments.returns({
-          exec: sinon.stub().rejects(new Error('woops')),
-        })
-      })
-
-      it('should produce an error', async function () {
-        await expect(this.call()).to.be.rejectedWith(Error)
-      })
-    })
-  })
-
-  describe('getAllInvites', function () {
-    beforeEach(function () {
-      this.fakeInvites = [
-        { _id: new ObjectId(), one: 1 },
-        { _id: new ObjectId(), two: 2 },
-      ]
-      this.ProjectInvite.find.returns({
-        exec: sinon.stub().resolves(this.fakeInvites),
-      })
-      this.call = async () => {
-        return await this.CollaboratorsInviteHandler.promises.getAllInvites(
-          this.projectId
-        )
-      }
-    })
-
-    describe('when all goes well', function () {
-      beforeEach(function () {})
-
-      it('should produce a list of invite objects', async function () {
-        const invites = await this.call()
-        expect(invites).to.not.be.oneOf([null, undefined])
-        expect(invites).to.deep.equal(this.fakeInvites)
-      })
-
-      it('should have called ProjectInvite.find', async function () {
-        await this.call()
-        this.ProjectInvite.find.callCount.should.equal(1)
-        this.ProjectInvite.find
-          .calledWith({ projectId: this.projectId })
-          .should.equal(true)
-      })
-    })
-
-    describe('when ProjectInvite.find produces an error', function () {
-      beforeEach(function () {
-        this.ProjectInvite.find.returns({
-          exec: sinon.stub().rejects(new Error('woops')),
-        })
-      })
-
-      it('should produce an error', async function () {
-        await expect(this.call()).to.be.rejectedWith(Error)
-      })
-    })
-  })
-
   describe('inviteToProject', function () {
     beforeEach(function () {
       this.ProjectInvite.prototype.save.callsFake(async function () {
+        Object.defineProperty(this, 'toObject', {
+          value: function () {
+            return this
+          },
+          writable: true,
+          configurable: true,
+          enumerable: false,
+        })
         return this
       })
       this.CollaboratorsInviteHandler.promises._sendMessages = sinon
@@ -182,19 +142,17 @@ describe('CollaboratorsInviteHandler', function () {
         expect(invite).to.not.equal(null)
         expect(invite).to.not.equal(undefined)
         expect(invite).to.be.instanceof(Object)
-        expect(invite).to.have.all.keys([
-          '_id',
-          'email',
-          'token',
-          'sendingUserId',
-          'projectId',
-          'privileges',
-        ])
+        expect(invite).to.have.all.keys(['_id', 'email', 'privileges'])
       })
 
       it('should have generated a random token', async function () {
         await this.call()
         this.Crypto.randomBytes.callCount.should.equal(1)
+      })
+
+      it('should have generated a HMAC token', async function () {
+        await this.call()
+        this.CollaboratorsInviteHelper.hashInviteToken.callCount.should.equal(1)
       })
 
       it('should have called ProjectInvite.save', async function () {
@@ -346,16 +304,21 @@ describe('CollaboratorsInviteHandler', function () {
     })
   })
 
-  describe('resendInvite', function () {
+  describe('generateNewInvite', function () {
     beforeEach(function () {
-      this.ProjectInvite.findOne.returns({
-        exec: sinon.stub().resolves(this.fakeInvite),
-      })
-      this.CollaboratorsInviteHandler.promises._sendMessages = sinon
+      this.fakeInviteToProjectObject = {
+        _id: new ObjectId(),
+        email: this.email,
+        privileges: this.privileges,
+      }
+      this.CollaboratorsInviteHandler.promises.revokeInvite = sinon
         .stub()
-        .resolves()
+        .resolves(this.fakeInvite)
+      this.CollaboratorsInviteHandler.promises.inviteToProject = sinon
+        .stub()
+        .resolves(this.fakeInviteToProjectObject)
       this.call = async () => {
-        return await this.CollaboratorsInviteHandler.promises.resendInvite(
+        return await this.CollaboratorsInviteHandler.promises.generateNewInvite(
           this.projectId,
           this.sendingUser,
           this.inviteId
@@ -364,44 +327,51 @@ describe('CollaboratorsInviteHandler', function () {
     })
 
     describe('when all goes well', function () {
-      it('should call ProjectInvite.findOne', async function () {
+      it('should call revokeInvite', async function () {
         await this.call()
-        this.ProjectInvite.findOne.callCount.should.equal(1)
-        this.ProjectInvite.findOne
-          .calledWith({ _id: this.inviteId, projectId: this.projectId })
+        this.CollaboratorsInviteHandler.promises.revokeInvite.callCount.should.equal(
+          1
+        )
+        this.CollaboratorsInviteHandler.promises.revokeInvite
+          .calledWith(this.projectId, this.inviteId)
           .should.equal(true)
       })
 
-      it('should have called _sendMessages', async function () {
+      it('should have called inviteToProject', async function () {
         await this.call()
-        this.CollaboratorsInviteHandler.promises._sendMessages.callCount.should.equal(
+        this.CollaboratorsInviteHandler.promises.inviteToProject.callCount.should.equal(
           1
         )
-        this.CollaboratorsInviteHandler.promises._sendMessages
-          .calledWith(this.projectId, this.sendingUser, this.fakeInvite)
+        this.CollaboratorsInviteHandler.promises.inviteToProject
+          .calledWith(
+            this.projectId,
+            this.sendingUser,
+            this.fakeInvite.email,
+            this.fakeInvite.privileges
+          )
           .should.equal(true)
       })
 
       it('should return the invite', async function () {
         const invite = await this.call()
-        expect(invite).to.deep.equal(this.fakeInvite)
+        expect(invite).to.deep.equal(this.fakeInviteToProjectObject)
       })
     })
 
-    describe('when findOne produces an error', function () {
+    describe('when revokeInvite produces an error', function () {
       beforeEach(function () {
-        this.ProjectInvite.findOne.returns({
-          exec: sinon.stub().rejects(new Error('woops')),
-        })
+        this.CollaboratorsInviteHandler.promises.revokeInvite = sinon
+          .stub()
+          .rejects(new Error('woops'))
       })
 
       it('should produce an error', async function () {
         await expect(this.call()).to.be.rejectedWith(Error)
       })
 
-      it('should not have called _sendMessages', async function () {
+      it('should not have called inviteToProject', async function () {
         await expect(this.call()).to.be.rejected
-        this.CollaboratorsInviteHandler.promises._sendMessages.callCount.should.equal(
+        this.CollaboratorsInviteHandler.promises.inviteToProject.callCount.should.equal(
           0
         )
       })
@@ -409,70 +379,16 @@ describe('CollaboratorsInviteHandler', function () {
 
     describe('when findOne does not find an invite', function () {
       beforeEach(function () {
-        this.ProjectInvite.findOne.returns({
-          exec: sinon.stub().resolves(null),
-        })
+        this.CollaboratorsInviteHandler.promises.revokeInvite = sinon
+          .stub()
+          .resolves(null)
       })
 
-      it('should not have called _sendMessages', async function () {
+      it('should not have called inviteToProject', async function () {
         await this.call()
-        this.CollaboratorsInviteHandler.promises._sendMessages.callCount.should.equal(
+        this.CollaboratorsInviteHandler.promises.inviteToProject.callCount.should.equal(
           0
         )
-      })
-    })
-  })
-
-  describe('getInviteByToken', function () {
-    beforeEach(function () {
-      this.ProjectInvite.findOne.returns({
-        exec: sinon.stub().resolves(this.fakeInvite),
-      })
-      this.call = async () => {
-        return await this.CollaboratorsInviteHandler.promises.getInviteByToken(
-          this.projectId,
-          this.token
-        )
-      }
-    })
-
-    describe('when all goes well', function () {
-      it('should produce the invite object', async function () {
-        const invite = await this.call()
-        expect(invite).to.deep.equal(this.fakeInvite)
-      })
-
-      it('should call ProjectInvite.findOne', async function () {
-        await this.call()
-        this.ProjectInvite.findOne.callCount.should.equal(1)
-        this.ProjectInvite.findOne
-          .calledWith({ projectId: this.projectId, token: this.token })
-          .should.equal(true)
-      })
-    })
-
-    describe('when findOne produces an error', function () {
-      beforeEach(function () {
-        this.ProjectInvite.findOne.returns({
-          exec: sinon.stub().rejects(new Error('woops')),
-        })
-      })
-
-      it('should produce an error', async function () {
-        await expect(this.call()).to.be.rejectedWith(Error)
-      })
-    })
-
-    describe('when findOne does not find an invite', function () {
-      beforeEach(function () {
-        this.ProjectInvite.findOne.returns({
-          exec: sinon.stub().resolves(null),
-        })
-      })
-
-      it('should not produce an invite object', async function () {
-        const invite = await this.call()
-        expect(invite).to.be.oneOf([null, undefined])
       })
     })
   })
@@ -481,9 +397,11 @@ describe('CollaboratorsInviteHandler', function () {
     beforeEach(function () {
       this.fakeProject = {
         _id: this.projectId,
-        collaberator_refs: [],
-        readOnly_refs: [],
+        owner_ref: this.sendingUserId,
       }
+      this.ProjectGetter.promises.getProject = sinon
+        .stub()
+        .resolves(this.fakeProject)
       this.CollaboratorsHandler.promises.addUserIdToProject.resolves()
       this.CollaboratorsInviteHandler.promises._tryCancelInviteNotification =
         sinon.stub().resolves()
@@ -538,6 +456,58 @@ describe('CollaboratorsInviteHandler', function () {
             this.fakeInvite.privileges
           )
           .should.equal(true)
+      })
+    })
+
+    describe('when link-sharing-enforcement is active', function () {
+      beforeEach(function () {
+        this.SplitTestHandler.promises.getAssignmentForUser.resolves({
+          variant: 'active',
+        })
+      })
+
+      describe('when the project has no more edit collaborator slots', function () {
+        beforeEach(function () {
+          this.LimitationsManager.promises.canAcceptEditCollaboratorInvite.resolves(
+            false
+          )
+        })
+
+        it('should add readAndWrite invitees to the project as readOnly (pendingEditor) users', async function () {
+          await this.call()
+          this.ProjectAuditLogHandler.promises.addEntry.should.have.been.calledWith(
+            this.projectId,
+            'editor-moved-to-pending',
+            null,
+            null,
+            { userId: this.userId.toString() }
+          )
+          this.CollaboratorsHandler.promises.addUserIdToProject.should.have.been.calledWith(
+            this.projectId,
+            this.sendingUserId,
+            this.userId,
+            'readOnly',
+            { pendingEditor: true }
+          )
+        })
+      })
+
+      describe('when the project has available edit collaborator slots', function () {
+        beforeEach(function () {
+          this.LimitationsManager.promises.canAcceptEditCollaboratorInvite.resolves(
+            true
+          )
+        })
+
+        it('should add readAndWrite invitees to the project as normal', async function () {
+          await this.call()
+          this.CollaboratorsHandler.promises.addUserIdToProject.should.have.been.calledWith(
+            this.projectId,
+            this.sendingUserId,
+            this.userId,
+            this.fakeInvite.privileges
+          )
+        })
       })
     })
 

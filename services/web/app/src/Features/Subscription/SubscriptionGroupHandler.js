@@ -1,67 +1,40 @@
-const { promisify } = require('util')
+const { callbackify } = require('util')
 const SubscriptionUpdater = require('./SubscriptionUpdater')
 const SubscriptionLocator = require('./SubscriptionLocator')
 const { Subscription } = require('../../models/Subscription')
 
-const SubscriptionGroupHandler = {
-  removeUserFromGroup(subscriptionId, userIdToRemove, callback) {
-    SubscriptionUpdater.removeUserFromGroup(
-      subscriptionId,
-      userIdToRemove,
-      callback
-    )
-  },
-
-  replaceUserReferencesInGroups(oldId, newId, callback) {
-    Subscription.updateOne(
-      { admin_id: oldId },
-      { admin_id: newId },
-      function (error) {
-        if (error) {
-          return callback(error)
-        }
-
-        replaceInArray(
-          Subscription,
-          'manager_ids',
-          oldId,
-          newId,
-          function (error) {
-            if (error) {
-              return callback(error)
-            }
-
-            replaceInArray(Subscription, 'member_ids', oldId, newId, callback)
-          }
-        )
-      }
-    )
-  },
-
-  isUserPartOfGroup(userId, subscriptionId, callback) {
-    SubscriptionLocator.getSubscriptionByMemberIdAndId(
-      userId,
-      subscriptionId,
-      function (err, subscription) {
-        let partOfGroup
-        if (subscription) {
-          partOfGroup = true
-        } else {
-          partOfGroup = false
-        }
-        callback(err, partOfGroup)
-      }
-    )
-  },
-
-  getTotalConfirmedUsersInGroup(subscriptionId, callback) {
-    SubscriptionLocator.getSubscription(subscriptionId, (err, subscription) =>
-      callback(err, subscription?.member_ids?.length)
-    )
-  },
+async function removeUserFromGroup(subscriptionId, userIdToRemove) {
+  await SubscriptionUpdater.promises.removeUserFromGroup(
+    subscriptionId,
+    userIdToRemove
+  )
 }
 
-function replaceInArray(model, property, oldValue, newValue, callback) {
+async function replaceUserReferencesInGroups(oldId, newId) {
+  await Subscription.updateOne({ admin_id: oldId }, { admin_id: newId }).exec()
+
+  await _replaceInArray(Subscription, 'manager_ids', oldId, newId)
+  await _replaceInArray(Subscription, 'member_ids', oldId, newId)
+}
+
+async function isUserPartOfGroup(userId, subscriptionId) {
+  const subscription =
+    await SubscriptionLocator.promises.getSubscriptionByMemberIdAndId(
+      userId,
+      subscriptionId
+    )
+
+  return !!subscription
+}
+
+async function getTotalConfirmedUsersInGroup(subscriptionId) {
+  const subscription =
+    await SubscriptionLocator.promises.getSubscription(subscriptionId)
+
+  return subscription?.member_ids?.length
+}
+
+async function _replaceInArray(model, property, oldValue, newValue) {
   // Mongo won't let us pull and addToSet in the same query, so do it in
   // two. Note we need to add first, since the query is based on the old user.
   const query = {}
@@ -73,19 +46,19 @@ function replaceInArray(model, property, oldValue, newValue, callback) {
   const setOldValue = {}
   setOldValue[property] = oldValue
 
-  model.updateMany(query, { $addToSet: setNewValue }, function (error) {
-    if (error) {
-      return callback(error)
-    }
-    model.updateMany(query, { $pull: setOldValue }, callback)
-  })
+  await model.updateMany(query, { $addToSet: setNewValue })
+  await model.updateMany(query, { $pull: setOldValue })
 }
 
-SubscriptionGroupHandler.promises = {
-  getTotalConfirmedUsersInGroup: promisify(
-    SubscriptionGroupHandler.getTotalConfirmedUsersInGroup
-  ),
-  isUserPartOfGroup: promisify(SubscriptionGroupHandler.isUserPartOfGroup),
+module.exports = {
+  removeUserFromGroup: callbackify(removeUserFromGroup),
+  replaceUserReferencesInGroups: callbackify(replaceUserReferencesInGroups),
+  getTotalConfirmedUsersInGroup: callbackify(getTotalConfirmedUsersInGroup),
+  isUserPartOfGroup: callbackify(isUserPartOfGroup),
+  promises: {
+    removeUserFromGroup,
+    replaceUserReferencesInGroups,
+    getTotalConfirmedUsersInGroup,
+    isUserPartOfGroup,
+  },
 }
-
-module.exports = SubscriptionGroupHandler

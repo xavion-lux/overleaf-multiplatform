@@ -97,7 +97,7 @@ function histogram(key, value, buckets, labels = {}) {
 }
 
 class Timer {
-  constructor(key, sampleRate = 1, labels = {}, buckets) {
+  constructor(key, sampleRate = 1, labels = {}, buckets = undefined) {
     if (typeof sampleRate === 'object') {
       // called with (key, labels, buckets)
       if (arguments.length === 3) {
@@ -121,12 +121,13 @@ class Timer {
     this.buckets = buckets
   }
 
-  done() {
+  // any labels passed into the done method override labels from constructor
+  done(labels = {}) {
     const timeSpan = new Date() - this.start
     if (this.buckets) {
-      histogram(this.key, timeSpan, this.buckets, this.labels)
+      histogram(this.key, timeSpan, this.buckets, { ...this.labels, ...labels })
     } else {
-      timing(this.key, timeSpan, this.sampleRate, this.labels)
+      timing(this.key, timeSpan, this.sampleRate, { ...this.labels, ...labels })
     }
     return timeSpan
   }
@@ -179,4 +180,3 @@ module.exports.leaked_sockets = require('./leaked_sockets')
 module.exports.event_loop = require('./event_loop')
 module.exports.memory = require('./memory')
 module.exports.mongodb = require('./mongodb')
-module.exports.timeAsyncMethod = require('./timeAsyncMethod')

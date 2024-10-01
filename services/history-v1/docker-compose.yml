@@ -6,7 +6,7 @@ version: "2.3"
 
 services:
   test_unit:
-    image: node:18.18.2
+    image: node:18.20.2
     volumes:
       - .:/overleaf/services/history-v1
       - ../../node_modules:/overleaf/node_modules
@@ -20,7 +20,7 @@ services:
     user: node
 
   test_acceptance:
-    image: node:18.18.2
+    image: node:18.20.2
     volumes:
       - .:/overleaf/services/history-v1
       - ../../node_modules:/overleaf/node_modules
@@ -28,9 +28,6 @@ services:
     working_dir: /overleaf/services/history-v1
     environment:
       ELASTIC_SEARCH_DSN: es:9200
-      REDIS_HOST: redis
-      QUEUES_REDIS_HOST: redis
-      ANALYTICS_QUEUES_REDIS_HOST: redis
       MONGO_HOST: mongo
       POSTGRES_HOST: postgres
       GCS_API_ENDPOINT: http://gcs:9090
@@ -51,18 +48,19 @@ services:
     command: npm run --silent test:acceptance
 
   mongo:
-    image: mongo:5.0.17
+    image: mongo:6.0.13
     command: --replSet overleaf
     healthcheck:
-      test: "mongo --quiet localhost/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 1)'"
+      test: "mongosh --quiet localhost/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 1)'"
       interval: 1s
       retries: 20
 
   postgres:
     image: postgres:10
     environment:
-      POSTGRES_USER: sharelatex
-      POSTGRES_PASSWORD: sharelatex
+      POSTGRES_USER: overleaf
+      POSTGRES_PASSWORD: overleaf
+      POSTGRES_DB: overleaf-history-v1-test
     healthcheck:
       test: pg_isready --host=localhost --quiet
       interval: 1s

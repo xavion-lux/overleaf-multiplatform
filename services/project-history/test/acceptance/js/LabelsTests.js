@@ -19,9 +19,9 @@ import * as ProjectHistoryClient from './helpers/ProjectHistoryClient.js'
 import * as ProjectHistoryApp from './helpers/ProjectHistoryApp.js'
 const { ObjectId } = mongodb
 
-const MockHistoryStore = () => nock('http://localhost:3100')
-const MockFileStore = () => nock('http://localhost:3009')
-const MockWeb = () => nock('http://localhost:3000')
+const MockHistoryStore = () => nock('http://127.0.0.1:3100')
+const MockFileStore = () => nock('http://127.0.0.1:3009')
+const MockWeb = () => nock('http://127.0.0.1:3000')
 
 const fixture = path => new URL(`../fixtures/${path}`, import.meta.url)
 
@@ -115,6 +115,40 @@ describe('Labels', function () {
           throw error
         }
         return ProjectHistoryClient.deleteLabel(
+          this.project_id,
+          label.id,
+          error => {
+            if (error != null) {
+              throw error
+            }
+            return ProjectHistoryClient.getLabels(
+              this.project_id,
+              (error, labels) => {
+                if (error != null) {
+                  throw error
+                }
+                expect(labels).to.deep.equal([])
+                return done()
+              }
+            )
+          }
+        )
+      }
+    )
+  })
+
+  it('can delete labels for the current user', function (done) {
+    return ProjectHistoryClient.createLabel(
+      this.project_id,
+      this.user_id,
+      7,
+      this.comment,
+      this.created_at,
+      (error, label) => {
+        if (error != null) {
+          throw error
+        }
+        return ProjectHistoryClient.deleteLabelForUser(
           this.project_id,
           this.user_id,
           label.id,

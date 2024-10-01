@@ -30,7 +30,6 @@ async function setNewUserPassword(req, res, next) {
   }
 
   passwordResetToken = passwordResetToken.trim()
-  delete req.session.resetToken
 
   const initiatorId = SessionManager.getLoggedInUserId(req.session)
   // password reset via tokens can be done while logged in, or not
@@ -58,10 +57,7 @@ async function setNewUserPassword(req, res, next) {
         message: req.i18n.translate('error_performing_request'),
       })
     }
-    await UserSessionsManager.promises.revokeAllUserSessions(
-      { _id: userId },
-      []
-    )
+    await UserSessionsManager.promises.removeSessionsFromRedis({ _id: userId })
     await UserUpdater.promises.removeReconfirmFlag(userId)
     if (!req.session.doLoginAfterPasswordReset) {
       return res.sendStatus(200)
@@ -104,6 +100,95 @@ async function setNewUserPassword(req, res, next) {
   AuthenticationController.finishLogin(user, req, res, next)
 }
 
+async function requestReset(req, res, next) {
+  const email = EmailsHelper.parseEmail(req.body.email)
+  if (!email) {
+    return res.status(400).json({
+      message: req.i18n.translate('must_be_email_address'),
+    })
+  }
+
+  let status
+  try {
+    status =
+      await PasswordResetHandler.promises.generateAndEmailResetToken(email)
+  } catch (err) {
+    OError.tag(err, 'failed to generate and email password reset token', {
+      email,
+    })
+    if (err.message === 'user does not have permission for change-password') {
+      return res.status(403).json({
+        message: {
+          key: 'no-password-allowed-due-to-sso',
+        },
+      })
+    }
+    throw err
+  }
+
+  if (status === 'primary') {
+    return res.status(200).json({
+      message: req.i18n.translate('password_reset_email_sent'),
+    })
+  } else if (status === 'secondary') {
+    return res.status(404).json({
+      message: req.i18n.translate('secondary_email_password_reset'),
+    })
+  } else {
+    return res.status(404).json({
+      message: req.i18n.translate('cant_find_email'),
+    })
+  }
+}
+
+async function renderSetPasswordForm(req, res, next) {
+  if (req.query.passwordResetToken != null) {
+    try {
+      const result =
+        await PasswordResetHandler.promises.getUserForPasswordResetToken(
+          req.query.passwordResetToken
+        )
+
+      const { user, remainingPeeks } = result || {}
+      if (!user || remainingPeeks <= 0) {
+        return res.redirect('/user/password/reset?error=token_expired')
+      }
+      req.session.resetToken = req.query.passwordResetToken
+      let emailQuery = ''
+
+      if (typeof req.query.email === 'string') {
+        const email = EmailsHelper.parseEmail(req.query.email)
+        if (email) {
+          emailQuery = `?email=${encodeURIComponent(email)}`
+        }
+      }
+
+      return res.redirect('/user/password/set' + emailQuery)
+    } catch (err) {
+      if (err.name === 'ForbiddenError') {
+        return next(err)
+      }
+      return res.redirect('/user/password/reset?error=token_expired')
+    }
+  }
+
+  if (req.session.resetToken == null) {
+    return res.redirect('/user/password/reset')
+  }
+
+  const email = EmailsHelper.parseEmail(req.query.email)
+
+  // clean up to avoid leaking the token in the session object
+  const passwordResetToken = req.session.resetToken
+  delete req.session.resetToken
+
+  res.render('user/setPassword', {
+    title: 'set_password',
+    email,
+    passwordResetToken,
+  })
+}
+
 module.exports = {
   renderRequestResetForm(req, res) {
     const errorQuery = req.query.error
@@ -117,65 +202,7 @@ module.exports = {
     })
   },
 
-  requestReset(req, res, next) {
-    const email = EmailsHelper.parseEmail(req.body.email)
-    if (!email) {
-      return res.status(400).json({
-        message: req.i18n.translate('must_be_email_address'),
-      })
-    }
-    PasswordResetHandler.generateAndEmailResetToken(email, (err, status) => {
-      if (err != null) {
-        OError.tag(err, 'failed to generate and email password reset token', {
-          email,
-        })
-        next(err)
-      } else if (status === 'primary') {
-        res.status(200).json({
-          message: req.i18n.translate('password_reset_email_sent'),
-        })
-      } else if (status === 'secondary') {
-        res.status(404).json({
-          message: req.i18n.translate('secondary_email_password_reset'),
-        })
-      } else {
-        res.status(404).json({
-          message: req.i18n.translate('cant_find_email'),
-        })
-      }
-    })
-  },
-
-  renderSetPasswordForm(req, res) {
-    if (req.query.passwordResetToken != null) {
-      return PasswordResetHandler.getUserForPasswordResetToken(
-        req.query.passwordResetToken,
-        (err, user, remainingUses) => {
-          if (err || !user || remainingUses <= 0) {
-            return res.redirect('/user/password/reset?error=token_expired')
-          }
-          req.session.resetToken = req.query.passwordResetToken
-          let emailQuery = ''
-          if (typeof req.query.email === 'string') {
-            const email = EmailsHelper.parseEmail(req.query.email)
-            if (email) {
-              emailQuery = `?email=${encodeURIComponent(email)}`
-            }
-          }
-          return res.redirect('/user/password/set' + emailQuery)
-        }
-      )
-    }
-    if (req.session.resetToken == null) {
-      return res.redirect('/user/password/reset')
-    }
-    const email = EmailsHelper.parseEmail(req.query.email)
-    res.render('user/setPassword', {
-      title: 'set_password',
-      email,
-      passwordResetToken: req.session.resetToken,
-    })
-  },
-
+  requestReset: expressify(requestReset),
+  renderSetPasswordForm: expressify(renderSetPasswordForm),
   setNewUserPassword: expressify(setNewUserPassword),
 }

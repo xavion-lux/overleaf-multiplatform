@@ -3,20 +3,20 @@
   "description": "Shared logic for syncing comments and tracked changes with operational transforms",
   "main": "index.cjs",
   "files": [
-    "index.cjs"
+    "index.cjs",
+    "types"
   ],
   "author": "Overleaf (https://www.overleaf.com)",
   "private": true,
   "scripts": {
-    "lint": "eslint --ext .js --ext .cjs --max-warnings 0 --format unix .",
-    "lint:fix": "eslint --fix --ext .js --ext .cjs .",
-    "format": "prettier --list-different $PWD/'**/*.{js,cjs}'",
-    "format:fix": "prettier --write $PWD/'**/*.{js,cjs}'",
-    "test": "npm run lint && npm run format && npm run typecheck && npm run test:unit",
+    "lint": "eslint --ext .js --ext .cjs --ext .ts --max-warnings 0 --format unix .",
+    "lint:fix": "eslint --fix --ext .js --ext .cjs --ext .ts .",
+    "format": "prettier --list-different $PWD/'**/*.{js,cjs,ts}'",
+    "format:fix": "prettier --write $PWD/'**/*.{js,cjs,ts}'",
+    "test": "npm run lint && npm run format && npm run types:check && npm run test:unit",
     "test:ci": "npm run test:unit",
-    "typecheck": "tsc --noEmit",
     "test:unit": "mocha --exit test/**/*.{js,cjs}",
-    "update-types": "rm -rf types && tsc --emitDeclarationOnly"
+    "types:check": "tsc --noEmit"
   },
   "devDependencies": {
     "mocha": "^10.2.0",

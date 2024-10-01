@@ -1,11 +1,12 @@
 services:
   cypress:
-    image: cypress/included:13.3.3
+    image: cypress/included:13.13.2
     volumes:
       - ../../:/overleaf
       - /tmp/.X11-unix:/tmp/.X11-unix
     working_dir: /overleaf/services/web
     entrypoint: npm
+    command: run cypress:open-ct
     user: "${DOCKER_USER:-1000:1000}"
     environment:
       VERBOSE_LOGGING:

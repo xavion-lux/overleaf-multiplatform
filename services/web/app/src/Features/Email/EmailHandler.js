@@ -1,5 +1,6 @@
 const { callbackify } = require('util')
 const Settings = require('@overleaf/settings')
+const logger = require('@overleaf/logger')
 const EmailBuilder = require('./EmailBuilder')
 const EmailSender = require('./EmailSender')
 const Queues = require('../../infrastructure/Queues')
@@ -22,7 +23,7 @@ async function sendEmail(emailType, opts) {
   opts.html = email.html
   opts.text = email.text
   opts.subject = email.subject
-  await EmailSender.promises.sendEmail(opts)
+  await EmailSender.promises.sendEmail(opts, emailType)
 }
 
 function sendDeferredEmail(emailType, opts, delay) {
@@ -30,5 +31,7 @@ function sendDeferredEmail(emailType, opts, delay) {
     'deferred-emails',
     { data: { emailType, opts } },
     delay
-  )
+  ).catch(err => {
+    logger.warn({ err, emailType, opts }, 'failed to queue deferred email')
+  })
 }

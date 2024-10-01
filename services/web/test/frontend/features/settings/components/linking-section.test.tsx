@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 import { screen, render } from '@testing-library/react'
 import fetchMock from 'fetch-mock'
-import LinkingSection from '../../../../../frontend/js/features/settings/components/linking-section'
-import { UserProvider } from '../../../../../frontend/js/shared/context/user-context'
-import { SSOProvider } from '../../../../../frontend/js/features/settings/context/sso-context'
+import LinkingSection from '@/features/settings/components/linking-section'
+import { UserProvider } from '@/shared/context/user-context'
+import { SSOProvider } from '@/features/settings/context/sso-context'
 import { SplitTestProvider } from '@/shared/context/split-test-context'
 
 function renderSectionWithProviders() {
@@ -34,23 +34,15 @@ const mockOauthProviders = {
     name: 'ORCID',
     linkPath: '/auth/orcid',
   },
-  twitter: {
-    hideWhenNotLinked: true,
-    name: 'Twitter',
-    linkPath: '/auth/twitter',
-  },
 }
 
 describe('<LinkingSection />', function () {
   beforeEach(function () {
-    window.metaAttributesCache = window.metaAttributesCache || new Map()
     window.metaAttributesCache.set('ol-user', {})
 
     // suppress integrations and references widgets as they cannot be tested in
     // all environments
-    window.metaAttributesCache.set('integrationLinkingWidgets', [])
-    window.metaAttributesCache.set('referenceLinkingWidgets', [])
-    window.metaAttributesCache.set('integrationLinkingWidgets', [])
+    window.metaAttributesCache.set('ol-hideLinkingWidgets', true)
 
     window.metaAttributesCache.set('ol-thirdPartyIds', {
       google: 'google-id',
@@ -60,7 +52,6 @@ describe('<LinkingSection />', function () {
   })
 
   afterEach(function () {
-    window.metaAttributesCache = new Map()
     fetchMock.reset()
   })
 
@@ -89,8 +80,6 @@ describe('<LinkingSection />', function () {
     expect(helpLink.getAttribute('href')).to.equal('/blog/434')
     const linkButton = screen.getByRole('link', { name: 'Link' })
     expect(linkButton.getAttribute('href')).to.equal('/auth/orcid?intent=link')
-
-    expect(screen.queryByText('Twitter')).to.not.exist
   })
 
   it('shows SSO error message', async function () {

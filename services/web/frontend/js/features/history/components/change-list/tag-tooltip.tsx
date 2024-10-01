@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { Modal } from 'react-bootstrap'
 import Icon from '../../../../shared/components/icon'
 import Tooltip from '../../../../shared/components/tooltip'
-import Badge from '../../../../shared/components/badge'
 import AccessibleModal from '../../../../shared/components/accessible-modal'
 import ModalError from './modal-error'
 import useAbortController from '../../../../shared/hooks/use-abort-controller'
@@ -15,13 +14,17 @@ import { isPseudoLabel } from '../../utils/label'
 import { LoadedLabel } from '../../services/types/label'
 import { debugConsole } from '@/utils/debugging'
 import { formatTimeBasedOnYear } from '@/features/utils/format-date'
+import { useEditorContext } from '@/shared/context/editor-context'
+import Tag from '@/shared/components/tag'
 
 type TagProps = {
   label: LoadedLabel
   currentUserId: string
 }
 
-function Tag({ label, currentUserId, ...props }: TagProps) {
+function ChangeTag({ label, currentUserId, ...props }: TagProps) {
+  const { isProjectOwner } = useEditorContext()
+
   const { t } = useTranslation()
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const { projectId } = useHistoryContext()
@@ -61,15 +64,19 @@ function Tag({ label, currentUserId, ...props }: TagProps) {
     }
   }
 
+  const showCloseButton = Boolean(
+    (isOwnedByCurrentUser || isProjectOwner) && !isPseudoCurrentStateLabel
+  )
+
   return (
     <>
-      <Badge
+      <Tag
         prepend={<Icon type="tag" fw />}
-        onClose={showConfirmationModal}
-        closeButton={Boolean(
-          isOwnedByCurrentUser && !isPseudoCurrentStateLabel
-        )}
-        closeBtnProps={{ 'aria-label': t('delete') }}
+        closeBtnProps={
+          showCloseButton
+            ? { 'aria-label': t('delete'), onClick: showConfirmationModal }
+            : undefined
+        }
         className="history-version-badge"
         data-testid="history-version-badge"
         {...props}
@@ -77,7 +84,7 @@ function Tag({ label, currentUserId, ...props }: TagProps) {
         {isPseudoCurrentStateLabel
           ? t('history_label_project_current_state')
           : label.comment}
-      </Badge>
+      </Tag>
       {!isPseudoCurrentStateLabel && (
         <AccessibleModal
           show={showDeleteModal}
@@ -159,10 +166,10 @@ function TagTooltip({ label, currentUserId, showTooltip }: LabelBadgesProps) {
       id={label.id}
       overlayProps={{ placement: 'left' }}
     >
-      <Tag label={label} currentUserId={currentUserId} />
+      <ChangeTag label={label} currentUserId={currentUserId} />
     </Tooltip>
   ) : (
-    <Tag label={label} currentUserId={currentUserId} />
+    <ChangeTag label={label} currentUserId={currentUserId} />
   )
 }
 

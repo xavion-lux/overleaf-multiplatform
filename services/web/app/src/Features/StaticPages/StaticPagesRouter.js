@@ -26,11 +26,6 @@ module.exports = {
       HomeController.externalPage('review-features-page', 'Review features')
     )
 
-    webRouter.get(
-      '/dropbox',
-      HomeController.externalPage('dropbox', 'Dropbox and ShareLaTeX')
-    )
-
     webRouter.get('/university', UniversityController.getIndexPage)
     return webRouter.get('/university/*', UniversityController.getPage)
   },

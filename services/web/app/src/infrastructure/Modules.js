@@ -1,15 +1,16 @@
 const fs = require('fs')
 const Path = require('path')
-const pug = require('pug')
 const async = require('async')
 const { promisify } = require('util')
 const Settings = require('@overleaf/settings')
+const Views = require('./Views')
 
 const MODULE_BASE_PATH = Path.join(__dirname, '/../../../modules')
 
 const _modules = []
 let _modulesLoaded = false
 const _hooks = {}
+const _middleware = {}
 let _viewIncludes = {}
 
 function modules() {
@@ -30,16 +31,29 @@ function loadModules() {
   }
 
   for (const moduleName of Settings.moduleImportSequence || []) {
-    const loadedModule = require(Path.join(
-      MODULE_BASE_PATH,
-      moduleName,
-      'index.js'
-    ))
+    const loadedModule = require(
+      Path.join(MODULE_BASE_PATH, moduleName, 'index.js')
+    )
     loadedModule.name = moduleName
     _modules.push(loadedModule)
+    if (loadedModule.viewIncludes) {
+      throw new Error(
+        `${moduleName}: module.viewIncludes moved into Settings.viewIncludes`
+      )
+    }
+    if (loadedModule.dependencies) {
+      for (const dependency of loadedModule.dependencies) {
+        if (!Settings.moduleImportSequence.includes(dependency)) {
+          throw new Error(
+            `Module '${dependency}' listed as a dependency of '${moduleName}' is missing in the moduleImportSequence. Please also verify that it is available in the current environment.`
+          )
+        }
+      }
+    }
   }
   _modulesLoaded = true
   attachHooks()
+  attachMiddleware()
 }
 
 function applyRouter(webRouter, privateApiRouter, publicApiRouter) {
@@ -65,35 +79,25 @@ function applyNonCsrfRouter(webRouter, privateApiRouter, publicApiRouter) {
   }
 }
 
-function loadViewIncludes(app) {
-  _viewIncludes = {}
+async function start() {
   for (const module of modules()) {
-    const object = module.viewIncludes || {}
-    for (const view in object) {
-      const partial = object[view]
-      if (!_viewIncludes[view]) {
-        _viewIncludes[view] = []
-      }
-      const filePath = Path.join(
-        MODULE_BASE_PATH,
-        module.name,
-        'app/views',
-        partial + '.pug'
-      )
-      _viewIncludes[view].push(
-        pug.compileFile(filePath, {
-          doctype: 'html',
-          compileDebug: Settings.debugPugTemplates,
-        })
-      )
-    }
+    await module.start?.()
   }
 }
 
-function registerAppMiddleware(app) {
+function loadViewIncludes(app) {
+  _viewIncludes = Views.compileViewIncludes(app)
+}
+
+function applyMiddleware(appOrRouter, middlewareName, options) {
+  if (!middlewareName) {
+    throw new Error(
+      'middleware name must be provided to register module middleware'
+    )
+  }
   for (const module of modules()) {
-    if (module.appMiddleware) {
-      module.appMiddleware(app)
+    if (module[middlewareName]) {
+      module[middlewareName](appOrRouter, options)
     }
   }
 }
@@ -124,11 +128,9 @@ function linkedFileAgentsIncludes() {
 
 function attachHooks() {
   for (const module of modules()) {
-    if (module.hooks != null) {
-      for (const hook in module.hooks) {
-        const method = module.hooks[hook]
-        attachHook(hook, method)
-      }
+    for (const hook in module.hooks || {}) {
+      const method = module.hooks[hook]
+      attachHook(hook, method)
     }
   }
 }
@@ -138,6 +140,18 @@ function attachHook(name, method) {
     _hooks[name] = []
   }
   _hooks[name].push(method)
+}
+
+function attachMiddleware() {
+  for (const module of modules()) {
+    for (const middleware in module.middleware || {}) {
+      const method = module.middleware[middleware]
+      if (_middleware[middleware] == null) {
+        _middleware[middleware] = []
+      }
+      _middleware[middleware].push(method)
+    }
+  }
 }
 
 function fireHook(name, ...rest) {
@@ -159,6 +173,14 @@ function fireHook(name, ...rest) {
   })
 }
 
+function getMiddleware(name) {
+  // ensure that modules are loaded if we need to call a middleware
+  if (!_modulesLoaded) {
+    loadModules()
+  }
+  return _middleware[name] || []
+}
+
 module.exports = {
   applyNonCsrfRouter,
   applyRouter,
@@ -166,11 +188,13 @@ module.exports = {
   loadViewIncludes,
   moduleIncludes,
   moduleIncludesAvailable,
-  registerAppMiddleware,
+  applyMiddleware,
+  start,
   hooks: {
     attach: attachHook,
     fire: fireHook,
   },
+  middleware: getMiddleware,
   promises: {
     hooks: {
       fire: promisify(fireHook),

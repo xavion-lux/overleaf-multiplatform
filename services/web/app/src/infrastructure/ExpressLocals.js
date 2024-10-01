@@ -1,18 +1,17 @@
 const logger = require('@overleaf/logger')
 const Metrics = require('@overleaf/metrics')
 const Settings = require('@overleaf/settings')
-const querystring = require('querystring')
 const _ = require('lodash')
 const { URL } = require('url')
 const Path = require('path')
 const moment = require('moment')
-const request = require('request')
+const { fetchJson } = require('@overleaf/fetch-utils')
 const contentDisposition = require('content-disposition')
 const Features = require('./Features')
 const SessionManager = require('../Features/Authentication/SessionManager')
-const SplitTestMiddleware = require('../Features/SplitTests/SplitTestMiddleware')
 const PackageVersions = require('./PackageVersions')
 const Modules = require('./Modules')
+const Errors = require('../Features/Errors/Errors')
 const {
   canRedirectToAdminDomain,
   hasAdminAccess,
@@ -20,7 +19,6 @@ const {
 const {
   addOptionalCleanupHandlerAfterDrainingConnections,
 } = require('./GracefulShutdown')
-const { expressify } = require('@overleaf/promise-utils')
 
 const IEEE_BRAND_ID = Settings.ieeeBrandId
 
@@ -50,24 +48,19 @@ switch (process.env.NODE_ENV) {
     webpackManifest = {}
 }
 function loadManifestFromWebpackDevServer(done = function () {}) {
-  request(
-    {
-      uri: `${Settings.apis.webpack.url}/manifest.json`,
-      headers: { Host: 'localhost' },
-      json: true,
+  fetchJson(new URL(`/manifest.json`, Settings.apis.webpack.url), {
+    headers: {
+      Host: 'localhost',
     },
-    (err, res, body) => {
-      if (!err && res.statusCode !== 200) {
-        err = new Error(`webpack responded with statusCode: ${res.statusCode}`)
-      }
-      if (err) {
-        logger.err({ err }, 'cannot fetch webpack manifest')
-        return done(err)
-      }
-      webpackManifest = body
+  })
+    .then(json => {
+      webpackManifest = json
       done()
-    }
-  )
+    })
+    .catch(error => {
+      logger.err({ error }, 'cannot fetch webpack manifest')
+      done(error)
+    })
 }
 const IN_CI = process.env.NODE_ENV === 'test'
 function getWebpackAssets(entrypoint, section) {
@@ -79,12 +72,6 @@ function getWebpackAssets(entrypoint, section) {
 }
 
 module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
-  webRouter.use(
-    expressify(
-      SplitTestMiddleware.loadAssignmentsInLocals(['website-redesign'])
-    )
-  )
-
   if (process.env.NODE_ENV === 'development') {
     // In the dev-env, delay requests until we fetched the manifest once.
     webRouter.use(function (req, res, next) {
@@ -186,14 +173,7 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
       return chunks.map(chunk => staticFilesBase + chunk)
     }
 
-    res.locals.mathJaxPath = `/js/libs/mathjax/MathJax.js?${querystring.stringify(
-      {
-        config: 'TeX-AMS_HTML,Safe',
-        v: PackageVersions.version.mathjax,
-      }
-    )}`
-
-    res.locals.mathJax3Path = `/js/libs/mathjax-3-${PackageVersions.version['mathjax-3']}/es5/tex-svg-full.js`
+    res.locals.mathJaxPath = `/js/libs/mathjax-${PackageVersions.version.mathjax}/es5/tex-svg-full.js`
 
     res.locals.lib = PackageVersions.lib
 
@@ -202,12 +182,16 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
     res.locals.isIEEE = brandVariation =>
       brandVariation?.brand_id === IEEE_BRAND_ID
 
-    res.locals.getCssThemeModifier = function (userSettings, brandVariation) {
+    res.locals.getCssThemeModifier = function (
+      userSettings,
+      brandVariation,
+      ieeeStylesheetEnabled
+    ) {
       // Themes only exist in OL v2
       if (Settings.overleaf != null) {
         // The IEEE theme takes precedence over the user personal setting, i.e. a user with
         // a theme setting of "light" will still get the IEE theme in IEEE branded projects.
-        if (res.locals.isIEEE(brandVariation)) {
+        if (ieeeStylesheetEnabled && res.locals.isIEEE(brandVariation)) {
           return 'ieee-'
         } else if (userSettings && userSettings.overallTheme != null) {
           return userSettings.overallTheme
@@ -220,8 +204,17 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
       return staticFilesBase + webpackManifest[cssFileName]
     }
 
-    res.locals.buildCssPath = function (themeModifier = '') {
-      return res.locals.buildStylesheetPath(`main-${themeModifier}style.css`)
+    res.locals.buildCssPath = function (
+      themeModifier = '',
+      bootstrapVersion = 3
+    ) {
+      // Pick which main stylesheet to use based on Bootstrap version
+      const bootstrap5Modifier = bootstrapVersion === 5 ? '-bootstrap-5' : ''
+      const computedThemeModifier = bootstrapVersion === 5 ? '' : themeModifier
+
+      return res.locals.buildStylesheetPath(
+        `main-${computedThemeModifier}style${bootstrap5Modifier}.css`
+      )
     }
 
     res.locals.buildImgPath = function (imgFile) {
@@ -235,12 +228,36 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
   webRouter.use(function (req, res, next) {
     res.locals.translate = req.i18n.translate
 
+    const addTranslatedTextDeep = obj => {
+      if (_.isObject(obj)) {
+        if (_.has(obj, 'text')) {
+          obj.translatedText = req.i18n.translate(obj.text)
+        }
+        _.forOwn(obj, value => {
+          addTranslatedTextDeep(value)
+        })
+      }
+    }
+
+    // This function is used to add translations from the server for main
+    // navigation items because it's tricky to get them in the front end
+    // otherwise.
+    res.locals.cloneAndTranslateText = obj => {
+      const clone = _.cloneDeep(obj)
+      addTranslatedTextDeep(clone)
+      return clone
+    }
+
     // Don't include the query string parameters, otherwise Google
     // treats ?nocdn=true as the canonical version
-    const parsedOriginalUrl = new URL(req.originalUrl, Settings.siteUrl)
-    res.locals.currentUrl = parsedOriginalUrl.pathname
-    res.locals.currentUrlWithQueryParams =
-      parsedOriginalUrl.pathname + parsedOriginalUrl.search
+    try {
+      const parsedOriginalUrl = new URL(req.originalUrl, Settings.siteUrl)
+      res.locals.currentUrl = parsedOriginalUrl.pathname
+      res.locals.currentUrlWithQueryParams =
+        parsedOriginalUrl.pathname + parsedOriginalUrl.search
+    } catch (err) {
+      return next(new Errors.InvalidError())
+    }
     res.locals.capitalize = function (string) {
       if (string.length === 0) {
         return ''
@@ -261,30 +278,6 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
 
   webRouter.use(function (req, res, next) {
     res.locals.StringHelper = require('../Features/Helpers/StringHelper')
-    next()
-  })
-
-  webRouter.use(function (req, res, next) {
-    res.locals.buildReferalUrl = function (referalMedium) {
-      let url = Settings.siteUrl
-      const currentUser = SessionManager.getSessionUser(req.session)
-      if (
-        currentUser != null &&
-        (currentUser != null ? currentUser.referal_id : undefined) != null
-      ) {
-        url += `?r=${currentUser.referal_id}&rm=${referalMedium}&rs=b` // Referal source = bonus
-      }
-      return url
-    }
-    res.locals.getReferalId = function () {
-      const currentUser = SessionManager.getSessionUser(req.session)
-      if (
-        currentUser != null &&
-        (currentUser != null ? currentUser.referal_id : undefined) != null
-      ) {
-        return currentUser.referal_id
-      }
-    }
     next()
   })
 
@@ -334,7 +327,7 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
 
   webRouter.use(function (req, res, next) {
     if (Settings.reloadModuleViewsOnEachRequest) {
-      Modules.loadViewIncludes()
+      Modules.loadViewIncludes(req.app)
     }
     res.locals.moduleIncludes = Modules.moduleIncludes
     res.locals.moduleIncludesAvailable = Modules.moduleIncludesAvailable
@@ -371,6 +364,12 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
   })
 
   webRouter.use(function (req, res, next) {
+    res.locals.bootstrap5Override =
+      req.query['bootstrap-5-override'] === 'enabled'
+    next()
+  })
+
+  webRouter.use(function (req, res, next) {
     res.locals.ExposedSettings = {
       isOverleaf: Settings.overleaf != null,
       appName: Settings.appName,
@@ -398,6 +397,7 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
       textExtensions: Settings.textExtensions,
       editableFilenames: Settings.editableFilenames,
       validRootDocExtensions: Settings.validRootDocExtensions,
+      fileIgnorePattern: Settings.fileIgnorePattern,
       sentryAllowedOriginRegex: Settings.sentry.allowedOriginRegex,
       sentryDsn: Settings.sentry.publicDSN,
       sentryEnvironment: Settings.sentry.environment,
@@ -414,6 +414,10 @@ module.exports = function (webRouter, privateApiRouter, publicApiRouter) {
       cookieDomain: Settings.cookieDomain,
       templateLinks: Settings.templateLinks,
       labsEnabled: Settings.labs && Settings.labs.enable,
+      groupSSOEnabled: Settings.groupSSO?.enabled,
+      wikiEnabled: Settings.overleaf != null || Settings.proxyLearn,
+      templatesEnabled:
+        Settings.overleaf != null || Settings.templates?.user_id != null,
     }
     next()
   })

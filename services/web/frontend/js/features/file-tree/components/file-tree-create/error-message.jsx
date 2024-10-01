@@ -26,12 +26,26 @@ export default function ErrorMessage({ error }) {
       case 'remote-service-error':
         return <DangerMessage>{t('remote_service_error')}</DangerMessage>
 
+      case 'folder_not_found':
+        return (
+          <DangerMessage>
+            {t('the_target_folder_could_not_be_found')}
+          </DangerMessage>
+        )
+
       case 'invalid_filename':
         return (
           <DangerMessage>
             {t('invalid_filename', {
               nameLimit: fileNameLimit,
             })}
+          </DangerMessage>
+        )
+
+      case 'duplicate_file_name':
+        return (
+          <DangerMessage>
+            {t('file_or_folder_name_already_exists')}
           </DangerMessage>
         )
 

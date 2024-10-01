@@ -3,7 +3,7 @@ const sinon = require('sinon')
 const modulePath =
   '../../../../app/src/Features/Subscription/SubscriptionUpdater'
 const { assert, expect } = require('chai')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 
 describe('SubscriptionUpdater', function () {
   beforeEach(function () {
@@ -77,6 +77,13 @@ describe('SubscriptionUpdater', function () {
       exec: sinon.stub().resolves(this.subscription),
     })
 
+    this.SSOConfigModel = class {}
+    this.SSOConfigModel.findOne = sinon.stub().returns({
+      lean: sinon.stub().returns({
+        exec: sinon.stub().resolves({ enabled: true }),
+      }),
+    })
+
     this.SubscriptionLocator = {
       promises: {
         getUsersSubscription: sinon.stub(),
@@ -139,8 +146,8 @@ describe('SubscriptionUpdater', function () {
     }
 
     this.AnalyticsManager = {
-      recordEventForUser: sinon.stub().resolves(),
-      setUserPropertyForUser: sinon.stub(),
+      recordEventForUserInBackground: sinon.stub().resolves(),
+      setUserPropertyForUserInBackground: sinon.stub(),
     }
 
     this.Features = {
@@ -158,6 +165,7 @@ describe('SubscriptionUpdater', function () {
         '../../models/Subscription': {
           Subscription: this.SubscriptionModel,
         },
+        '../../models/SSOConfig': { SSOConfig: this.SSOConfigModel },
         './UserFeaturesUpdater': this.UserFeaturesUpdater,
         './SubscriptionLocator': this.SubscriptionLocator,
         '@overleaf/settings': this.Settings,
@@ -284,9 +292,22 @@ describe('SubscriptionUpdater', function () {
       })
     })
 
-    it('should not remove the subscription when expired if it has "managedUsers" feature', async function () {
+    it('should not remove the subscription when expired if it has Managed Users enabled', async function () {
       this.Features.hasFeature.withArgs('saas').returns(true)
       this.subscription.managedUsersEnabled = true
+
+      this.recurlySubscription.state = 'expired'
+      await this.SubscriptionUpdater.promises.updateSubscriptionFromRecurly(
+        this.recurlySubscription,
+        this.subscription,
+        {}
+      )
+      this.SubscriptionModel.deleteOne.should.not.have.been.called
+    })
+
+    it('should not remove the subscription when expired if it has Group SSO enabled', async function () {
+      this.Features.hasFeature.withArgs('saas').returns(true)
+      this.subscription.ssoConfig = new ObjectId('abc123abc123abc123abc123')
 
       this.recurlySubscription.state = 'expired'
       await this.SubscriptionUpdater.promises.updateSubscriptionFromRecurly(
@@ -427,7 +448,7 @@ describe('SubscriptionUpdater', function () {
         .calledWith(searchOps, insertOperation)
         .should.equal(true)
       sinon.assert.calledWith(
-        this.AnalyticsManager.recordEventForUser,
+        this.AnalyticsManager.recordEventForUserInBackground,
         this.otherUserId,
         'group-subscription-joined',
         {
@@ -456,7 +477,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.setUserPropertyForUser,
+        this.AnalyticsManager.setUserPropertyForUserInBackground,
         this.otherUserId,
         'group-subscription-plan-code',
         'group_subscription'
@@ -472,7 +493,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.setUserPropertyForUser,
+        this.AnalyticsManager.setUserPropertyForUserInBackground,
         this.otherUserId,
         'group-subscription-plan-code',
         'better_group_subscription'
@@ -488,7 +509,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.setUserPropertyForUser,
+        this.AnalyticsManager.setUserPropertyForUserInBackground,
         this.otherUserId,
         'group-subscription-plan-code',
         'better_group_subscription'
@@ -546,7 +567,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.recordEventForUser,
+        this.AnalyticsManager.recordEventForUserInBackground,
         this.otherUserId,
         'group-subscription-left',
         {
@@ -562,7 +583,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.setUserPropertyForUser,
+        this.AnalyticsManager.setUserPropertyForUserInBackground,
         this.otherUserId,
         'group-subscription-plan-code',
         null
@@ -614,7 +635,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.setUserPropertyForUser,
+        this.AnalyticsManager.setUserPropertyForUserInBackground,
         this.otherUserId,
         'group-subscription-plan-code',
         null
@@ -661,7 +682,7 @@ describe('SubscriptionUpdater', function () {
         this.otherUserId
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.recordEventForUser,
+        this.AnalyticsManager.recordEventForUserInBackground,
         this.otherUserId,
         'group-subscription-left',
         {
@@ -670,7 +691,7 @@ describe('SubscriptionUpdater', function () {
         }
       )
       sinon.assert.calledWith(
-        this.AnalyticsManager.recordEventForUser,
+        this.AnalyticsManager.recordEventForUserInBackground,
         this.otherUserId,
         'group-subscription-left',
         {

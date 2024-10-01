@@ -67,7 +67,6 @@ module.exports = ExportsHandler = {
       project(cb) {
         return ProjectGetter.getProject(projectId, cb)
       },
-      // TODO: when we update async, signature will change from (cb, results) to (results, cb)
       rootDoc: [
         'project',
         (results, cb) =>
@@ -170,7 +169,7 @@ module.exports = ExportsHandler = {
     }
     return request.post(
       {
-        url: `${settings.apis.v1.url}/api/v1/sharelatex/exports`,
+        url: `${settings.apis.v1.url}/api/v1/overleaf/exports`,
         auth: { user: settings.apis.v1.user, pass: settings.apis.v1.pass },
         json: exportData,
         timeout: settings.apis.v1.timeout,
@@ -230,7 +229,7 @@ module.exports = ExportsHandler = {
     }
     return request.get(
       {
-        url: `${settings.apis.v1.url}/api/v1/sharelatex/exports/${exportId}`,
+        url: `${settings.apis.v1.url}/api/v1/overleaf/exports/${exportId}`,
         auth: { user: settings.apis.v1.user, pass: settings.apis.v1.pass },
         timeout: settings.apis.v1.timeout,
       },
@@ -259,7 +258,7 @@ module.exports = ExportsHandler = {
     }
     return request.get(
       {
-        url: `${settings.apis.v1.url}/api/v1/sharelatex/exports/${exportId}/${type}_url`,
+        url: `${settings.apis.v1.url}/api/v1/overleaf/exports/${exportId}/${type}_url`,
         auth: { user: settings.apis.v1.user, pass: settings.apis.v1.pass },
         timeout: settings.apis.v1.timeout,
       },

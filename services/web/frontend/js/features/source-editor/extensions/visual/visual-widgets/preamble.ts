@@ -84,6 +84,14 @@ export class PreambleWidget extends WidgetType {
     return this.expanded === other.expanded
   }
 
+  coordsAt(element: HTMLElement) {
+    return element.getBoundingClientRect()
+  }
+
+  get estimatedHeight() {
+    return this.expanded ? -1 : 54
+  }
+
   getToggleText(view: EditorView) {
     if (this.expanded) {
       return view.state.phrase(`hide_document_preamble`)

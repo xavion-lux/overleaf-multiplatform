@@ -1,4 +1,5 @@
 import sessionStorage from '../infrastructure/session-storage'
+import getMeta from '@/utils/meta'
 
 const CACHE_KEY = 'mbEvents'
 
@@ -51,6 +52,14 @@ export function sendMBSampled(key, body = {}, rate = 0.01) {
   }
 }
 
+const sentOncePerPageLoad = new Set()
+
+export function sendMBOncePerPageLoad(key, segmentation = {}) {
+  if (sentOncePerPageLoad.has(key)) return
+  sendMB(key, segmentation)
+  sentOncePerPageLoad.add(key)
+}
+
 // Use breakpoint @screen-xs-max from less:
 // @screen-xs-max: (@screen-sm-min - 1);
 // @screen-sm-min: @screen-sm;
@@ -59,8 +68,9 @@ export const isSmallDevice = window.screen.width < 768
 
 function sendBeacon(key, data) {
   if (!navigator || !navigator.sendBeacon) return
+  if (!getMeta('ol-ExposedSettings').isOverleaf) return
 
-  data._csrf = window.csrfToken
+  data._csrf = getMeta('ol-csrfToken')
   const blob = new Blob([JSON.stringify(data)], {
     type: 'application/json; charset=UTF-8',
   })

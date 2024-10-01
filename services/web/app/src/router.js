@@ -31,6 +31,7 @@ const ClsiCookieManager = require('./Features/Compile/ClsiCookieManager')(
 const HealthCheckController = require('./Features/HealthCheck/HealthCheckController')
 const ProjectDownloadsController = require('./Features/Downloads/ProjectDownloadsController')
 const FileStoreController = require('./Features/FileStore/FileStoreController')
+const DocumentUpdaterController = require('./Features/DocumentUpdater/DocumentUpdaterController')
 const HistoryController = require('./Features/History/HistoryController')
 const ExportsController = require('./Features/Exports/ExportsController')
 const PasswordResetRouter = require('./Features/PasswordReset/PasswordResetRouter')
@@ -40,6 +41,7 @@ const Modules = require('./infrastructure/Modules')
 const {
   RateLimiter,
   openProjectRateLimiter,
+  overleafLoginRateLimiter,
 } = require('./infrastructure/RateLimiter')
 const RateLimiterMiddleware = require('./Features/Security/RateLimiterMiddleware')
 const InactiveProjectController = require('./Features/InactiveData/InactiveProjectController')
@@ -50,10 +52,10 @@ const BetaProgramController = require('./Features/BetaProgram/BetaProgramControl
 const AnalyticsRouter = require('./Features/Analytics/AnalyticsRouter')
 const MetaController = require('./Features/Metadata/MetaController')
 const TokenAccessController = require('./Features/TokenAccess/TokenAccessController')
+const TokenAccessRouter = require('./Features/TokenAccess/TokenAccessRouter')
 const Features = require('./infrastructure/Features')
 const LinkedFilesRouter = require('./Features/LinkedFiles/LinkedFilesRouter')
 const TemplatesRouter = require('./Features/Templates/TemplatesRouter')
-const InstitutionsController = require('./Features/Institutions/InstitutionsController')
 const UserMembershipRouter = require('./Features/UserMembership/UserMembershipRouter')
 const SystemMessageController = require('./Features/SystemMessages/SystemMessageController')
 const AnalyticsRegistrationSourceMiddleware = require('./Features/Analytics/AnalyticsRegistrationSourceMiddleware')
@@ -123,6 +125,20 @@ const rateLimiters = {
     points: 30,
     duration: 60 * 60,
   }),
+  flushHistory: new RateLimiter('flush-project-history', {
+    // Allow flushing once every 30s-1s (allow for network jitter).
+    points: 1,
+    duration: 30 - 1,
+  }),
+  getProjectBlob: new RateLimiter('get-project-blob', {
+    // Download project in full once per hour
+    points: Settings.maxEntitiesPerProject,
+    duration: 60 * 60,
+  }),
+  getHistorySnapshot: new RateLimiter(
+    'get-history-snapshot',
+    openProjectRateLimiter.getOptions()
+  ),
   endorseEmail: new RateLimiter('endorse-email', {
     points: 30,
     duration: 60,
@@ -219,15 +235,27 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
 
   webRouter.post(
     '/login',
+    RateLimiterMiddleware.rateLimit(overleafLoginRateLimiter), // rate limit IP (20 / 60s)
+    RateLimiterMiddleware.loginRateLimitEmail, // rate limit email (10 / 120s)
     CaptchaMiddleware.validateCaptcha('login'),
     AuthenticationController.passportLogin
   )
+
+  webRouter.get(
+    '/compromised-password',
+    AuthenticationController.requireLogin(),
+    UserPagesController.compromisedPasswordPage
+  )
+
+  webRouter.get('/account-suspended', UserPagesController.accountSuspended)
 
   if (Settings.enableLegacyLogin) {
     AuthenticationController.addEndpointToLoginWhitelist('/login/legacy')
     webRouter.get('/login/legacy', UserPagesController.loginPage)
     webRouter.post(
       '/login/legacy',
+      RateLimiterMiddleware.rateLimit(overleafLoginRateLimiter), // rate limit IP (20 / 60s)
+      RateLimiterMiddleware.loginRateLimitEmail, // rate limit email (10 / 120s)
       CaptchaMiddleware.validateCaptcha('login'),
       AuthenticationController.passportLogin
     )
@@ -261,6 +289,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
   LinkedFilesRouter.apply(webRouter, privateApiRouter, publicApiRouter)
   TemplatesRouter.apply(webRouter)
   UserMembershipRouter.apply(webRouter)
+  TokenAccessRouter.apply(webRouter)
 
   Modules.applyRouter(webRouter, privateApiRouter, publicApiRouter)
 
@@ -290,6 +319,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     '/user/password/update',
     AuthenticationController.requireLogin(),
     RateLimiterMiddleware.rateLimit(rateLimiters.changePassword),
+    PermissionsController.requirePermission('change-password'),
     UserController.changePassword
   )
   webRouter.get(
@@ -299,9 +329,14 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     UserController.promises.ensureAffiliationMiddleware,
     UserEmailsController.list
   )
-  webRouter.get('/user/emails/confirm', UserEmailsController.showConfirm)
+  webRouter.get(
+    '/user/emails/confirm',
+    AuthenticationController.requireLogin(),
+    UserEmailsController.showConfirm
+  )
   webRouter.post(
     '/user/emails/confirm',
+    AuthenticationController.requireLogin(),
     RateLimiterMiddleware.rateLimit(rateLimiters.confirmEmail),
     UserEmailsController.confirm
   )
@@ -309,6 +344,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     '/user/emails/resend_confirmation',
     AuthenticationController.requireLogin(),
     RateLimiterMiddleware.rateLimit(rateLimiters.resendConfirmation),
+    Modules.middleware('resendConfirmationEmail'),
     UserEmailsController.resendConfirmation
   )
 
@@ -321,6 +357,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
   webRouter.post(
     '/user/emails/primary-email-check',
     AuthenticationController.requireLogin(),
+    PermissionsController.useCapabilities(),
     UserEmailsController.primaryEmailCheck
   )
 
@@ -333,10 +370,12 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
       CaptchaMiddleware.validateCaptcha('addEmail'),
       UserEmailsController.add
     )
+
     webRouter.post(
       '/user/emails/delete',
       AuthenticationController.requireLogin(),
       RateLimiterMiddleware.rateLimit(rateLimiters.deleteEmail),
+      Modules.middleware('userDeleteEmail'),
       UserEmailsController.remove
     )
     webRouter.post(
@@ -350,6 +389,22 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
       PermissionsController.requirePermission('endorse-email'),
       RateLimiterMiddleware.rateLimit(rateLimiters.endorseEmail),
       UserEmailsController.endorse
+    )
+  }
+
+  if (Features.hasFeature('saas')) {
+    webRouter.get(
+      '/user/emails/add-secondary',
+      AuthenticationController.requireLogin(),
+      PermissionsController.requirePermission('add-secondary-email'),
+      UserEmailsController.addSecondaryEmailPage
+    )
+
+    webRouter.get(
+      '/user/emails/confirm-secondary',
+      AuthenticationController.requireLogin(),
+      PermissionsController.requirePermission('add-secondary-email'),
+      UserEmailsController.confirmSecondaryEmailPage
     )
   }
 
@@ -448,6 +503,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     '/project',
     AuthenticationController.requireLogin(),
     RateLimiterMiddleware.rateLimit(rateLimiters.openDashboard),
+    PermissionsController.useCapabilities(),
     ProjectListController.projectListPage
   )
   webRouter.post(
@@ -474,7 +530,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
       RateLimiterMiddleware.rateLimit(openProjectRateLimiter, {
         params: ['Project_id'],
       }),
-      AuthenticationController.validateUserSession(),
+      PermissionsController.useCapabilities(),
       AuthorizationMiddleware.ensureUserCanReadProject,
       ProjectController.loadEditor
     )
@@ -488,6 +544,11 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     '/Project/:Project_id/file/:File_id',
     AuthorizationMiddleware.ensureUserCanReadProject,
     FileStoreController.getFile
+  )
+  webRouter.get(
+    '/Project/:Project_id/doc/:Doc_id/download', // "download" suffix to avoid conflict with private API route at doc/:doc_id
+    AuthorizationMiddleware.ensureUserCanReadProject,
+    DocumentUpdaterController.getDoc
   )
   webRouter.post(
     '/project/:Project_id/settings',
@@ -732,6 +793,16 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     AuthorizationMiddleware.ensureUserCanWriteProjectContent,
     HistoryController.restoreFileFromV2
   )
+  webRouter.post(
+    '/project/:project_id/revert_file',
+    AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+    HistoryController.revertFile
+  )
+  webRouter.post(
+    '/project/:project_id/revert-project',
+    AuthorizationMiddleware.ensureUserCanWriteProjectContent,
+    HistoryController.revertProject
+  )
   webRouter.get(
     '/project/:project_id/version/:version/zip',
     RateLimiterMiddleware.rateLimit(rateLimiters.downloadProjectRevision),
@@ -909,8 +980,8 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     RateLimiterMiddleware.rateLimit(rateLimiters.removeProjectFromTag),
     TagsController.removeProjectFromTag
   )
-  webRouter.delete(
-    '/tag/:tagId/projects',
+  webRouter.post(
+    '/tag/:tagId/projects/remove',
     AuthenticationController.requireLogin(),
     RateLimiterMiddleware.rateLimit(rateLimiters.removeProjectsFromTag),
     validate({
@@ -1037,7 +1108,7 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
   webRouter.post(
     '/spelling/check',
     AuthenticationController.requireLogin(),
-    SpellingController.proxyRequestToSpellingApi
+    SpellingController.proxyCheckRequestToSpellingApi
   )
   webRouter.post(
     '/spelling/learn',
@@ -1097,34 +1168,6 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     '/beta/opt-out',
     AuthenticationController.requireLogin(),
     BetaProgramController.optOut
-  )
-
-  // New "api" endpoints. Started as a way for v1 to call over to v2 (for
-  // long-term features, as opposed to the nominally temporary ones in the
-  // overleaf-integration module), but may expand beyond that role.
-  publicApiRouter.post(
-    '/api/clsi/compile/:submission_id',
-    AuthenticationController.requirePrivateApiAuth(),
-    CompileController.compileSubmission
-  )
-  publicApiRouter.get(
-    /^\/api\/clsi\/compile\/([^/]*)\/build\/([0-9a-f-]+)\/output\/(.*)$/,
-    function (req, res, next) {
-      const params = {
-        submission_id: req.params[0],
-        build_id: req.params[1],
-        file: req.params[2],
-      }
-      req.params = params
-      next()
-    },
-    AuthenticationController.requirePrivateApiAuth(),
-    CompileController.getFileFromClsiWithoutUser
-  )
-  publicApiRouter.post(
-    '/api/institutions/confirm_university_domain',
-    AuthenticationController.requirePrivateApiAuth(),
-    InstitutionsController.confirmDomain
   )
 
   webRouter.get('/chrome', function (req, res, next) {
@@ -1192,11 +1235,11 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
     } else if (!Settings.editorIsOpen) {
       plainTextResponse(res, 'web editor is closed (web)')
     } else {
-      plainTextResponse(res, 'web sharelatex is alive (web)')
+      plainTextResponse(res, 'web is alive (web)')
     }
   })
   privateApiRouter.get('/status', (req, res) => {
-    plainTextResponse(res, 'web sharelatex is alive (api)')
+    plainTextResponse(res, 'web is alive (api)')
   })
 
   // used by kubernetes health-check and acceptance tests
@@ -1279,28 +1322,6 @@ function initialize(webRouter, privateApiRouter, publicApiRouter) {
       )
     }
   )
-
-  webRouter.get('/no-cache', function (req, res, next) {
-    res.header('Cache-Control', 'max-age=0')
-    res.sendStatus(404)
-  })
-
-  webRouter.get('/oops-express', (req, res, next) =>
-    next(new Error('Test error'))
-  )
-  webRouter.get('/oops-internal', function (req, res, next) {
-    throw new Error('Test error')
-  })
-  webRouter.get('/oops-mongo', (req, res, next) =>
-    require('./models/Project').Project.findOne({}, function () {
-      throw new Error('Test error')
-    })
-  )
-
-  privateApiRouter.get('/opps-small', function (req, res, next) {
-    logger.err('test error occured')
-    res.sendStatus(200)
-  })
 
   webRouter.post('/error/client', function (req, res, next) {
     logger.warn(

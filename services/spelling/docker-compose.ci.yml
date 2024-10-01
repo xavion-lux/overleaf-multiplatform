@@ -19,16 +19,13 @@ services:
     image: ci/$PROJECT_NAME:$BRANCH_NAME-$BUILD_NUMBER
     environment:
       ELASTIC_SEARCH_DSN: es:9200
-      REDIS_HOST: redis
-      QUEUES_REDIS_HOST: redis
-      ANALYTICS_QUEUES_REDIS_HOST: redis
       MONGO_HOST: mongo
       POSTGRES_HOST: postgres
       MOCHA_GREP: ${MOCHA_GREP}
       NODE_ENV: test
       NODE_OPTIONS: "--unhandled-rejections=strict"
     user: node
-    command: npm run test:acceptance:_run
+    command: npm run test:acceptance
 
 
   tar:

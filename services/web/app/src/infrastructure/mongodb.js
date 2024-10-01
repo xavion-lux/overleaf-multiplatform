@@ -1,7 +1,20 @@
-const { ObjectId, ReadPreference } = require('mongodb')
+const mongodb = require('mongodb-legacy')
 const OError = require('@overleaf/o-error')
 const Settings = require('@overleaf/settings')
-const { getNativeDb } = require('./Mongoose')
+const Mongoose = require('./Mongoose')
+const { addConnectionDrainer } = require('./GracefulShutdown')
+
+// Ensure Mongoose is using the same mongodb instance as the mongodb module,
+// otherwise we will get multiple versions of the ObjectId class. Mongoose
+// patches ObjectId, so loading multiple versions of the mongodb module can
+// cause problems with ObjectId comparisons.
+if (Mongoose.mongo.ObjectId !== mongodb.ObjectId) {
+  throw new OError(
+    'FATAL ERROR: Mongoose is using a different mongodb instance'
+  )
+}
+
+const { ObjectId, ReadPreference } = mongodb
 
 if (
   typeof global.beforeEach === 'function' &&
@@ -26,8 +39,18 @@ async function waitForDb() {
 }
 
 const db = {}
+
+const mongoClient = new mongodb.MongoClient(
+  Settings.mongo.url,
+  Settings.mongo.options
+)
+
+addConnectionDrainer('mongodb', async () => {
+  await mongoClient.close()
+})
+
 async function setupDb() {
-  const internalDb = await getNativeDb()
+  const internalDb = mongoClient.db()
 
   db.contacts = internalDb.collection('contacts')
   db.deletedFiles = internalDb.collection('deletedFiles')
@@ -38,7 +61,6 @@ async function setupDb() {
   db.dropboxProjects = internalDb.collection('dropboxProjects')
   db.docHistory = internalDb.collection('docHistory')
   db.docHistoryIndex = internalDb.collection('docHistoryIndex')
-  db.docOps = internalDb.collection('docOps')
   db.docSnapshots = internalDb.collection('docSnapshots')
   db.docs = internalDb.collection('docs')
   db.feedbacks = internalDb.collection('feedbacks')
@@ -49,6 +71,8 @@ async function setupDb() {
   db.githubSyncUserCredentials = internalDb.collection(
     'githubSyncUserCredentials'
   )
+  db.globalMetrics = internalDb.collection('globalMetrics')
+  db.grouppolicies = internalDb.collection('grouppolicies')
   db.institutions = internalDb.collection('institutions')
   db.messages = internalDb.collection('messages')
   db.migrations = internalDb.collection('migrations')
@@ -84,21 +108,23 @@ async function setupDb() {
   db.onboardingDataCollection = internalDb.collection(
     'onboardingDataCollection'
   )
+
+  await mongoClient.connect()
 }
 
 async function getCollectionNames() {
-  const internalDb = await getNativeDb()
+  const internalDb = mongoClient.db()
 
   const collections = await internalDb.collections()
   return collections.map(collection => collection.collectionName)
 }
 
 async function dropTestDatabase() {
-  const internalDb = await getNativeDb()
+  const internalDb = mongoClient.db()
   const dbName = internalDb.databaseName
   const env = process.env.NODE_ENV
 
-  if (dbName !== 'test-sharelatex' || env !== 'test') {
+  if (dbName !== 'test-overleaf' || env !== 'test') {
     throw new OError(
       `Refusing to clear database '${dbName}' in environment '${env}'`
     )
@@ -111,7 +137,7 @@ async function dropTestDatabase() {
  * WARNING: Consider using a pre-populated collection from `db` to avoid typos!
  */
 async function getCollectionInternal(name) {
-  const internalDb = await getNativeDb()
+  const internalDb = mongoClient.db()
   return internalDb.collection(name)
 }
 

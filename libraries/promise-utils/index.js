@@ -8,8 +8,10 @@ module.exports = {
   promisifyMultiResult,
   callbackify,
   callbackifyAll,
+  callbackifyClass,
   callbackifyMultiResult,
   expressify,
+  expressifyErrorHandler,
   promiseMapWithLimit,
 }
 
@@ -143,13 +145,18 @@ function promisifyMultiResult(fn, resultNames) {
  *
  * @param {Object} module - The module to callbackify
  * @param {Object} opts - Options
+ * @param {Array<string>} opts.without - Array of method names to exclude from
+ *                                       being callbackified
  * @param {Object} opts.multiResult - Spec of methods to be callbackified with
  *                                    callbackifyMultiResult()
  */
 function callbackifyAll(module, opts = {}) {
-  const { multiResult = {} } = opts
+  const { without = [], multiResult = {} } = opts
   const callbacks = {}
   for (const propName of Object.getOwnPropertyNames(module)) {
+    if (without.includes(propName)) {
+      continue
+    }
     const propValue = module[propName]
     if (typeof propValue === 'function') {
       if (propValue.constructor.name === 'AsyncFunction') {
@@ -172,6 +179,34 @@ function callbackifyAll(module, opts = {}) {
 }
 
 /**
+ * Callbackify all methods in a class.
+ *
+ * Options are the same as for callbackifyAll
+ */
+function callbackifyClass(cls, opts = {}) {
+  const callbackified = class extends cls {}
+  const { without = [], multiResult = {} } = opts
+  for (const propName of Object.getOwnPropertyNames(cls.prototype)) {
+    if (propName === 'constructor' || without.includes(propName)) {
+      continue
+    }
+    const propValue = cls.prototype[propName]
+    if (typeof propValue !== 'function') {
+      continue
+    }
+    if (multiResult[propName] != null) {
+      callbackified.prototype[propName] = callbackifyMultiResult(
+        propValue,
+        multiResult[propName]
+      )
+    } else {
+      callbackified.prototype[propName] = callbackify(propValue)
+    }
+  }
+  return callbackified
+}
+
+/**
  * Reverse the effect of `promisifyMultiResult`.
  *
  * This is meant for providing a temporary backward compatible callback
@@ -180,7 +215,7 @@ function callbackifyAll(module, opts = {}) {
 function callbackifyMultiResult(fn, resultNames) {
   function callbackified(...args) {
     const [callback] = args.splice(-1)
-    fn(...args)
+    fn.apply(this, args)
       .then(result => {
         const cbResults = resultNames.map(resultName => result[resultName])
         callback(null, ...cbResults)
@@ -199,7 +234,18 @@ function callbackifyMultiResult(fn, resultNames) {
  */
 function expressify(fn) {
   return (req, res, next) => {
-    fn(req, res, next).catch(next)
+    return fn(req, res, next).catch(next)
+  }
+}
+
+/**
+ * Transform an async function into an Error Handling Express middleware
+ *
+ * Any error will be passed to the error middlewares via `next()`
+ */
+function expressifyErrorHandler(fn) {
+  return (err, req, res, next) => {
+    fn(err, req, res, next).catch(next)
   }
 }
 

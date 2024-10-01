@@ -19,7 +19,7 @@ module.exports = {
   check(callback) {
     const docId = new ObjectId()
     const projectId = new ObjectId(settings.docstore.healthCheck.project_id)
-    const url = `http://localhost:${port}/project/${projectId}/doc/${docId}`
+    const url = `http://127.0.0.1:${port}/project/${projectId}/doc/${docId}`
     const lines = [
       'smoke test - delete me',
       `${crypto.randomBytes(32).toString('hex')}`,
@@ -61,7 +61,6 @@ module.exports = {
         })
       },
       cb => db.docs.deleteOne({ _id: docId, project_id: projectId }, cb),
-      cb => db.docOps.deleteOne({ doc_id: docId }, cb),
     ]
     return async.series(jobs, callback)
   },

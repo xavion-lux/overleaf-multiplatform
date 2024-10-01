@@ -1,35 +1,6 @@
 import '../../marketing'
 
-function realTimeEditsDemo() {
-  const frames = [
-    { before: '', time: 1000 },
-    { before: 'i', time: 100 },
-    { before: 'in', time: 200 },
-    { before: 'in ', time: 300 },
-    { before: 'in r', time: 100 },
-    { before: 'in re', time: 200 },
-    { before: 'in rea', time: 100 },
-    { before: 'in real', time: 200 },
-    { before: 'in real ', time: 400 },
-    { before: 'in real t', time: 200 },
-    { before: 'in real ti', time: 100 },
-    { before: 'in real tim', time: 200 },
-    { before: 'in real time', time: 2000 },
-  ]
-  let index = 0
-  function nextFrame() {
-    const frame = frames[index]
-    index = (index + 1) % frames.length
-
-    $('.real-time-example').html(frame.before + "<div class='cursor'>|</div>")
-    setTimeout(nextFrame, frame.time)
-  }
-
-  nextFrame()
-}
-realTimeEditsDemo()
-
-function homepageAnimation() {
+function homepageAnimation(homepageAnimationEl) {
   function createFrames(word, { buildTime, holdTime, breakTime }) {
     const frames = []
     let current = ''
@@ -50,7 +21,7 @@ function homepageAnimation() {
     }
 
     // Add the final frame with an empty string
-    frames.push({ before: '', time: holdTime })
+    frames.push({ before: '', time: breakTime })
 
     return frames
   }
@@ -62,11 +33,14 @@ function homepageAnimation() {
   }
 
   const frames = [
+    // 1.5s pause before starting
+    { before: '', time: 1500 },
     ...createFrames('articles', opts),
     ...createFrames('theses', opts),
     ...createFrames('reports', opts),
     ...createFrames('presentations', opts),
-    ...createFrames('anything', opts),
+    // 5s pause on 'anything' frame
+    ...createFrames('anything', { ...opts, holdTime: 5000 }),
   ]
 
   let index = 0
@@ -74,10 +48,22 @@ function homepageAnimation() {
     const frame = frames[index]
     index = (index + 1) % frames.length
 
-    $('#home-animation-text').html(frame.before)
+    homepageAnimationEl.innerHTML = frame.before
     setTimeout(nextFrame, frame.time)
   }
 
   nextFrame()
 }
-homepageAnimation()
+
+const homepageAnimationEl = document.querySelector('#home-animation-text')
+const reducedMotionReduce = window.matchMedia(
+  '(prefers-reduced-motion: reduce)'
+)
+
+if (homepageAnimationEl) {
+  if (reducedMotionReduce.matches) {
+    homepageAnimationEl.innerHTML = 'anything'
+  } else {
+    homepageAnimation(homepageAnimationEl)
+  }
+}

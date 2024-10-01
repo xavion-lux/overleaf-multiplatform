@@ -4,7 +4,7 @@ const modulePath = '../../../../app/src/Features/User/UserInfoController.js'
 const SandboxedModule = require('sandboxed-module')
 const MockResponse = require('../helpers/MockResponse')
 const MockRequest = require('../helpers/MockRequest')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 
 describe('UserInfoController', function () {
   beforeEach(function () {
@@ -14,7 +14,7 @@ describe('UserInfoController', function () {
 
     this.UserInfoController = SandboxedModule.require(modulePath, {
       requires: {
-        mongodb: { ObjectId },
+        'mongodb-legacy': { ObjectId },
         './UserGetter': this.UserGetter,
         './UserUpdater': this.UserUpdater,
         './UserDeleter': this.UserDeleter,
@@ -30,7 +30,7 @@ describe('UserInfoController', function () {
   })
 
   describe('getPersonalInfo', function () {
-    describe('when the user exists with sharelatex id', function () {
+    describe('when the user exists with mongo id', function () {
       beforeEach(function () {
         this.user_id = new ObjectId().toString()
         this.user = { _id: new ObjectId(this.user_id) }
@@ -107,7 +107,7 @@ describe('UserInfoController', function () {
         _id: new ObjectId(),
         first_name: 'Douglas',
         last_name: 'Adams',
-        email: 'doug@sharelatex.com',
+        email: 'doug@overleaf.com',
       }
       this.formattedInfo = {
         id: this.user._id.toString(),
@@ -129,7 +129,7 @@ describe('UserInfoController', function () {
         _id: new ObjectId(),
         first_name: 'Douglas',
         last_name: 'Adams',
-        email: 'doug@sharelatex.com',
+        email: 'doug@overleaf.com',
         password: 'should-not-get-included',
         signUpDate: new Date(),
         role: 'student',

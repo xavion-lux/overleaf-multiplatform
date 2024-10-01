@@ -1,3 +1,4 @@
+// @ts-check
 'use strict'
 
 const _ = require('lodash')
@@ -9,10 +10,14 @@ const HashFileData = require('./file_data/hash_file_data')
 const StringFileData = require('./file_data/string_file_data')
 
 /**
- * @typedef {import("./blob")} Blob
- * @typedef {import("./types").BlobStore} BlobStore
- * @typedef {import("./types").StringFileRawData} StringFileRawData
- * @typedef {import("./operation/text_operation")} TextOperation
+ * @import Blob from "./blob"
+ * @import { BlobStore, ReadonlyBlobStore, RawFileData, RawFile } from "./types"
+ * @import { StringFileRawData, CommentRawData } from "./types"
+ * @import CommentList from "./file_data/comment_list"
+ * @import TextOperation from "./operation/text_operation"
+ * @import TrackedChangeList from "./file_data/tracked_change_list"
+ *
+ * @typedef {{filterTrackedDeletes?: boolean}} FileGetContentOptions
  */
 
 class NotEditableError extends OError {
@@ -56,9 +61,14 @@ class File {
     assert.instance(data, FileData, 'File: bad data')
 
     this.data = data
+    this.metadata = {}
     this.setMetadata(metadata || {})
   }
 
+  /**
+   * @param {RawFile} raw
+   * @return {File|null}
+   */
   static fromRaw(raw) {
     if (!raw) return null
     return new File(FileData.fromRaw(raw), raw.metadata)
@@ -66,11 +76,12 @@ class File {
 
   /**
    * @param  {string} hash
+   * @param  {string} [rangesHash]
    * @param  {Object} [metadata]
    * @return {File}
    */
-  static fromHash(hash, metadata) {
-    return new File(new HashFileData(hash), metadata)
+  static fromHash(hash, rangesHash, metadata) {
+    return new File(new HashFileData(hash, rangesHash), metadata)
   }
 
   /**
@@ -83,8 +94,8 @@ class File {
   }
 
   /**
-   * @param  {number} [byteLength]
-   * @param  {number} [stringLength]
+   * @param  {number} byteLength
+   * @param  {number?} stringLength
    * @param  {Object} [metadata]
    * @return {File}
    */
@@ -94,14 +105,19 @@ class File {
 
   /**
    * @param {Blob} blob
+   * @param {Blob} [rangesBlob]
    * @param {Object} [metadata]
    * @return {File}
    */
-  static createLazyFromBlob(blob, metadata) {
-    return new File(FileData.createLazyFromBlob(blob), metadata)
+  static createLazyFromBlobs(blob, rangesBlob, metadata) {
+    return new File(FileData.createLazyFromBlobs(blob, rangesBlob), metadata)
   }
 
+  /**
+   * @returns {RawFile}
+   */
   toRaw() {
+    /** @type RawFile */
     const rawFileData = this.data.toRaw()
     storeRawMetadata(this.metadata, rawFileData)
     return rawFileData
@@ -117,13 +133,24 @@ class File {
   }
 
   /**
-   * The content of the file, if it is known and if this file has UTF-8 encoded
-   * content.
+   * Hexadecimal SHA-1 hash of the ranges content (comments + tracked changes),
+   * if known.
    *
    * @return {string | null | undefined}
    */
-  getContent() {
-    return this.data.getContent()
+  getRangesHash() {
+    return this.data.getRangesHash()
+  }
+
+  /**
+   * The content of the file, if it is known and if this file has UTF-8 encoded
+   * content.
+   *
+   * @param {FileGetContentOptions} [opts]
+   * @return {string | null | undefined}
+   */
+  getContent(opts = {}) {
+    return this.data.getContent(opts)
   }
 
   /**
@@ -184,12 +211,29 @@ class File {
   }
 
   /**
+   * Get the comments for this file.
+   *
+   * @return {CommentList}
+   */
+  getComments() {
+    return this.data.getComments()
+  }
+
+  /**
+   * Get the tracked changes for this file.
+   * @return {TrackedChangeList}
+   */
+  getTrackedChanges() {
+    return this.data.getTrackedChanges()
+  }
+
+  /**
    * Clone a file.
    *
    * @return {File} a new object of the same type
    */
   clone() {
-    return File.fromRaw(this.toRaw())
+    return /** @type {File} */ (File.fromRaw(this.toRaw()))
   }
 
   /**
@@ -198,7 +242,7 @@ class File {
    * operation.
    *
    * @param {string} kind
-   * @param {BlobStore} blobStore
+   * @param {ReadonlyBlobStore} blobStore
    * @return {Promise.<File>} for this
    */
   async load(kind, blobStore) {
@@ -213,15 +257,20 @@ class File {
    * the hash.
    *
    * @param {BlobStore} blobStore
-   * @return {Promise<Object>} a raw HashFile
+   * @return {Promise<RawFile>} a raw HashFile
    */
   async store(blobStore) {
+    /** @type RawFile */
     const raw = await this.data.store(blobStore)
     storeRawMetadata(this.metadata, raw)
     return raw
   }
 }
 
+/**
+ * @param {Object} metadata
+ * @param {RawFile} raw
+ */
 function storeRawMetadata(metadata, raw) {
   if (!_.isEmpty(metadata)) {
     raw.metadata = _.cloneDeep(metadata)

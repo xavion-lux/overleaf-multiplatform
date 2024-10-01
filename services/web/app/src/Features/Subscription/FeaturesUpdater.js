@@ -43,7 +43,7 @@ async function refreshFeatures(userId, reason) {
   logger.debug({ userId, features }, 'updating user features')
 
   const matchedFeatureSet = FeaturesHelper.getMatchedFeatureSet(features)
-  AnalyticsManager.setUserPropertyForUser(
+  AnalyticsManager.setUserPropertyForUserInBackground(
     userId,
     'feature-set',
     matchedFeatureSet
@@ -59,6 +59,16 @@ async function refreshFeatures(userId, reason) {
       logger.error(err)
     }
   }
+
+  if (oldFeatures.github === true && features.github === false) {
+    logger.debug({ userId }, '[FeaturesUpdater] must unlink github')
+    try {
+      await Modules.promises.hooks.fire('removeGithub', userId, reason)
+    } catch (err) {
+      logger.error(err)
+    }
+  }
+
   return { features: newFeatures, featuresChanged }
 }
 
@@ -104,16 +114,14 @@ async function computeFeatures(userId) {
 }
 
 async function _getIndividualFeatures(userId) {
-  const sub = await SubscriptionLocator.promises.getUserIndividualSubscription(
-    userId
-  )
+  const sub =
+    await SubscriptionLocator.promises.getUserIndividualSubscription(userId)
   return _subscriptionToFeatures(sub)
 }
 
 async function _getGroupFeatureSets(userId) {
-  const subs = await SubscriptionLocator.promises.getGroupSubscriptionsMemberOf(
-    userId
-  )
+  const subs =
+    await SubscriptionLocator.promises.getGroupSubscriptionsMemberOf(userId)
   return (subs || []).map(_subscriptionToFeatures)
 }
 

@@ -1,3 +1,4 @@
+// ts-check
 const _ = require('lodash')
 const Metrics = require('@overleaf/metrics')
 const Settings = require('@overleaf/settings')
@@ -23,17 +24,14 @@ const LimitationsManager = require('../Subscription/LimitationsManager')
 const NotificationsBuilder = require('../Notifications/NotificationsBuilder')
 const GeoIpLookup = require('../../infrastructure/GeoIpLookup')
 const SplitTestHandler = require('../SplitTests/SplitTestHandler')
+const SplitTestSessionHandler = require('../SplitTests/SplitTestSessionHandler')
 const SubscriptionLocator = require('../Subscription/SubscriptionLocator')
 
-/** @typedef {import("./types").GetProjectsRequest} GetProjectsRequest */
-/** @typedef {import("./types").GetProjectsResponse} GetProjectsResponse */
-/** @typedef {import("../../../../types/project/dashboard/api").ProjectApi} ProjectApi */
-/** @typedef {import("../../../../types/project/dashboard/api").Filters} Filters */
-/** @typedef {import("../../../../types/project/dashboard/api").Page} Page */
-/** @typedef {import("../../../../types/project/dashboard/api").Sort} Sort */
-/** @typedef {import("./types").AllUsersProjects} AllUsersProjects */
-/** @typedef {import("./types").MongoProject} MongoProject */
-/** @typedef {import("../Tags/types").Tag} Tag */
+/**
+ * @import { GetProjectsRequest, GetProjectsResponse, AllUsersProjects, MongoProject } from "./types"
+ * @import { ProjectApi, Filters, Page, Sort } from "../../../../types/project/dashboard/api"
+ * @import { Tag } from "../Tags/types"
+ */
 
 const _ssoAvailable = (affiliation, session, linkedInstitutionIds) => {
   if (!affiliation.institution) return false
@@ -78,6 +76,17 @@ const _buildPortalTemplatesList = affiliations => {
   return portalTemplates
 }
 
+function cleanupSession(req) {
+  // cleanup redirects at the end of the redirect chain
+  delete req.session.postCheckoutRedirect
+  delete req.session.postLoginRedirect
+  delete req.session.postOnboardingRedirect
+
+  // cleanup details from register page
+  delete req.session.sharedProjectData
+  delete req.session.templateData
+}
+
 /**
  * @param {import("express").Request} req
  * @param {import("express").Response} res
@@ -85,6 +94,8 @@ const _buildPortalTemplatesList = affiliations => {
  * @returns {Promise<void>}
  */
 async function projectListPage(req, res, next) {
+  cleanupSession(req)
+
   // can have two values:
   // - undefined - when there's no "saas" feature or couldn't get subscription data
   // - object - the subscription data object
@@ -102,7 +113,7 @@ async function projectListPage(req, res, next) {
   })
   const user = await User.findById(
     userId,
-    `email emails features alphaProgram betaProgram lastPrimaryEmailCheck signUpDate${
+    `email emails features alphaProgram betaProgram lastPrimaryEmailCheck labsProgram signUpDate${
       isSaas ? ' enrollment writefull' : ''
     }`
   )
@@ -114,7 +125,7 @@ async function projectListPage(req, res, next) {
   }
 
   if (isSaas) {
-    await SplitTestHandler.promises.sessionMaintenance(req, user)
+    await SplitTestSessionHandler.promises.sessionMaintenance(req, user)
 
     try {
       usersBestSubscription =
@@ -154,6 +165,16 @@ async function projectListPage(req, res, next) {
 
     if (user && UserPrimaryEmailCheckHandler.requiresPrimaryEmailCheck(user)) {
       return res.redirect('/user/emails/primary-email-check')
+    }
+  } else {
+    if (!process.env.OVERLEAF_IS_SERVER_PRO) {
+      // temporary survey for CE: https://github.com/overleaf/internal/issues/19710
+      survey = {
+        name: 'ce-survey',
+        preText: 'Help us improve Overleaf',
+        linkText: 'by filling out this quick survey',
+        url: 'https://docs.google.com/forms/d/e/1FAIpQLSdPAS-731yaLOvRM8HW7j6gVeOpcmB_X5A5qwgNJT7Oj09lLA/viewform?usp=sf_link',
+      }
     }
   }
 
@@ -325,19 +346,6 @@ async function projectListPage(req, res, next) {
       )
     }
   }
-  try {
-    // The assignment will be picked up via 'ol-splitTestVariants' in react.
-    await SplitTestHandler.promises.getAssignment(
-      req,
-      res,
-      'download-pdf-dashboard'
-    )
-  } catch (err) {
-    logger.error(
-      { err },
-      'failed to get "download-pdf-dashboard" split test assignment'
-    )
-  }
 
   const hasPaidAffiliation = userAffiliations.some(
     affiliation => affiliation.licence && affiliation.licence !== 'free'
@@ -350,7 +358,7 @@ async function projectListPage(req, res, next) {
 
   const groupsAndEnterpriseBannerVariant =
     showGroupsAndEnterpriseBanner &&
-    _.sample(['did-you-know', 'on-premise', 'people', 'FOMO'])
+    _.sample(['on-premise', 'FOMO', 'FOMO', 'FOMO'])
 
   let showWritefullPromoBanner = false
   if (Features.hasFeature('saas') && !req.session.justRegistered) {
@@ -369,83 +377,33 @@ async function projectListPage(req, res, next) {
     }
   }
 
-  try {
-    await SplitTestHandler.promises.getAssignment(
-      req,
-      res,
-      'writefull-integration'
-    )
-  } catch (err) {
-    logger.warn(
-      { err },
-      'failed to get "writefull-integration" split test assignment'
-    )
-  }
-
-  let showInrGeoBanner, inrGeoBannerSplitTestName
-  let inrGeoBannerVariant = 'default'
+  let showInrGeoBanner = false
+  let showBrlGeoBanner = false
   let showLATAMBanner = false
   let recommendedCurrency
+
   if (usersBestSubscription?.type === 'free') {
-    const { currencyCode, countryCode } =
+    const latamGeoPricingAssignment =
+      await SplitTestHandler.promises.getAssignment(
+        req,
+        res,
+        'geo-pricing-latam-v2'
+      )
+
+    const { countryCode, currencyCode } =
       await GeoIpLookup.promises.getCurrencyCode(req.ip)
-    let inrGeoPricingVariant = 'default'
-    try {
-      // Split test is kept active, but all users geolocated in India can
-      // now use the INR currency (See #13507)
-      const inrGeoPricingAssignment =
-        await SplitTestHandler.promises.getAssignment(
-          req,
-          res,
-          'geo-pricing-inr'
-        )
-      inrGeoPricingVariant = inrGeoPricingAssignment.variant
-    } catch (error) {
-      logger.error(
-        { err: error },
-        'Failed to get geo-pricing-inr split test assignment'
-      )
-    }
-    try {
-      const latamGeoPricingAssignment =
-        await SplitTestHandler.promises.getAssignment(
-          req,
-          res,
-          'geo-pricing-latam'
-        )
-      showLATAMBanner =
-        latamGeoPricingAssignment.variant === 'latam' &&
-        ['BR', 'MX', 'CO', 'CL', 'PE'].includes(countryCode)
-      // LATAM Banner needs to know which currency to display
-      if (showLATAMBanner) {
-        recommendedCurrency = currencyCode
-      }
-    } catch (error) {
-      logger.error(
-        { err: error },
-        'Failed to get geo-pricing-latam split test assignment'
-      )
-    }
+
     if (countryCode === 'IN') {
-      inrGeoBannerSplitTestName =
-        inrGeoPricingVariant === 'inr'
-          ? 'geo-banners-inr-2'
-          : 'geo-banners-inr-1'
-      try {
-        const geoBannerAssignment =
-          await SplitTestHandler.promises.getAssignment(
-            req,
-            res,
-            inrGeoBannerSplitTestName
-          )
-        showInrGeoBanner = true
-        inrGeoBannerVariant = geoBannerAssignment.variant
-      } catch (error) {
-        logger.error(
-          { err: error },
-          `Failed to get INR geo banner lookup or assignment (${inrGeoBannerSplitTestName})`
-        )
-      }
+      showInrGeoBanner = true
+    }
+    showBrlGeoBanner = countryCode === 'BR'
+
+    showLATAMBanner =
+      latamGeoPricingAssignment.variant === 'latam' &&
+      ['MX', 'CO', 'CL', 'PE'].includes(countryCode)
+    // LATAM Banner needs to know which currency to display
+    if (showLATAMBanner) {
+      recommendedCurrency = currencyCode
     }
   }
 
@@ -463,21 +421,23 @@ async function projectListPage(req, res, next) {
     logger.error({ err: error }, 'Failed to get individual subscription')
   }
 
-  let newNotificationStyle
   try {
-    const newNotificationStyleAssignment =
-      await SplitTestHandler.promises.getAssignment(
-        req,
-        res,
-        'new-notification-style'
-      )
-    newNotificationStyle = newNotificationStyleAssignment.variant === 'enabled'
+    await SplitTestHandler.promises.getAssignment(req, res, 'paywall-cta')
   } catch (error) {
     logger.error(
       { err: error },
-      'failed to get "new-notification-style" split test assignment'
+      'failed to get "paywall-cta" split test assignment'
     )
   }
+
+  // Get the user's assignment for this page's Bootstrap 5 split test, which
+  // populates splitTestVariants with a value for the split test name and allows
+  // Pug to read it
+  await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'bootstrap-5-project-dashboard'
+  )
 
   res.render('project/list-react', {
     title: 'your_projects',
@@ -499,8 +459,7 @@ async function projectListPage(req, res, next) {
     showLATAMBanner,
     recommendedCurrency,
     showInrGeoBanner,
-    inrGeoBannerVariant,
-    inrGeoBannerSplitTestName,
+    showBrlGeoBanner,
     projectDashboardReact: true, // used in navbar
     groupSsoSetupSuccess,
     groupSubscriptionsPendingEnrollment:
@@ -509,7 +468,7 @@ async function projectListPage(req, res, next) {
         groupName: subscription.teamName,
       })),
     hasIndividualRecurlySubscription,
-    newNotificationStyle,
+    userRestrictions: Array.from(req.userRestrictions || []),
   })
 }
 

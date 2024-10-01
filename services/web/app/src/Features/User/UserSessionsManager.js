@@ -126,11 +126,12 @@ const UserSessionsManager = {
     })
   },
 
-  revokeAllUserSessions(user, retain, callback) {
-    if (!retain) {
-      retain = []
-    }
-    retain = retain.map(i => UserSessionsManager._sessionKey(i))
+  /**
+   * @param {{_id: string}} user
+   * @param {string | null | undefined} retainSessionID - the session ID to exclude from deletion
+   * @param {(err: Error | null, data?: unknown) => void} callback
+   */
+  removeSessionsFromRedis(user, retainSessionID, callback) {
     if (!user) {
       return callback(null)
     }
@@ -143,10 +144,12 @@ const UserSessionsManager = {
         })
         return callback(err)
       }
-      const keysToDelete = _.filter(
-        sessionKeys,
-        k => !Array.from(retain).includes(k)
-      )
+      const keysToDelete = retainSessionID
+        ? _.without(
+            sessionKeys,
+            UserSessionsManager._sessionKey(retainSessionID)
+          )
+        : sessionKeys
       if (keysToDelete.length === 0) {
         logger.debug(
           { userId: user._id },
@@ -242,7 +245,11 @@ const UserSessionsManager = {
 
 UserSessionsManager.promises = {
   getAllUserSessions: promisify(UserSessionsManager.getAllUserSessions),
-  revokeAllUserSessions: promisify(UserSessionsManager.revokeAllUserSessions),
+  removeSessionsFromRedis: (user, retainSessionID = null) =>
+    promisify(UserSessionsManager.removeSessionsFromRedis)(
+      user,
+      retainSessionID
+    ),
   untrackSession: promisify(UserSessionsManager.untrackSession),
 }
 

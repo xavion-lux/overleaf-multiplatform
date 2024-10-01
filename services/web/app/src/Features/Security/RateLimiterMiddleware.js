@@ -16,32 +16,33 @@ const settings = require('@overleaf/settings')
  * will rate limit each project_id separately.
  *
  * Unique clients are identified by user_id if logged in, and IP address if not.
+ * The method label is used to identify this in our metrics.
  */
 function rateLimit(rateLimiter, opts = {}) {
   const getUserId =
     opts.getUserId || (req => SessionManager.getLoggedInUserId(req.session))
   return function (req, res, next) {
-    const userId = getUserId(req) || req.ip
+    const clientId = opts.ipOnly ? req.ip : getUserId(req) || req.ip
+    const method = clientId === req.ip ? 'ip' : 'userId'
+
     if (
       settings.smokeTest &&
       settings.smokeTest.userId &&
-      settings.smokeTest.userId.toString() === userId.toString()
+      settings.smokeTest.userId.toString() === clientId.toString()
     ) {
       // ignore smoke test user
       return next()
     }
 
-    let key
-    if (opts.ipOnly) {
-      key = req.ip
-    } else {
+    let key = clientId
+    if (!opts.ipOnly) {
       const params = (opts.params || []).map(p => req.params[p])
-      params.push(userId)
+      params.push(clientId)
       key = params.join(':')
     }
 
     rateLimiter
-      .consume(key)
+      .consume(key, 1, { method })
       .then(() => next())
       .catch(err => {
         if (err instanceof Error) {
@@ -55,7 +56,7 @@ function rateLimit(rateLimiter, opts = {}) {
   }
 }
 
-function loginRateLimit(req, res, next) {
+function loginRateLimitEmail(req, res, next) {
   const { email } = req.body
   if (!email) {
     return next()
@@ -69,15 +70,20 @@ function loginRateLimit(req, res, next) {
     } else {
       logger.warn({ email }, 'rate limit exceeded')
       res.status(429) // Too many requests
-      res.write('Rate limit reached, please try again later')
-      res.end()
+      res.json({
+        message: {
+          type: 'error',
+          text: req.i18n.translate('to_many_login_requests_2_mins'),
+          key: 'to-many-login-requests-2-mins',
+        },
+      })
     }
   })
 }
 
 const RateLimiterMiddleware = {
   rateLimit,
-  loginRateLimit,
+  loginRateLimitEmail,
 }
 
 module.exports = RateLimiterMiddleware

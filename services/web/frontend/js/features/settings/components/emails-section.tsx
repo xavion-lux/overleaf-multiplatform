@@ -9,8 +9,7 @@ import EmailsHeader from './emails/header'
 import EmailsRow from './emails/row'
 import AddEmail from './emails/add-email'
 import Icon from '../../../shared/components/icon'
-import { Alert } from 'react-bootstrap'
-import { ExposedSettings } from '../../../../../types/exposed-settings'
+import OLNotification from '@/features/ui/components/ol/ol-notification'
 import { LeaversSurveyAlert } from './leavers-survey-alert'
 
 function EmailsSectionContent() {
@@ -24,9 +23,7 @@ function EmailsSectionContent() {
   const userEmails = Object.values(userEmailsData.byId)
 
   // Only show the "add email" button if the user has permission to add a secondary email
-  const hideAddSecondaryEmail = getMeta(
-    'ol-cannot-add-secondary-email'
-  ) as boolean
+  const hideAddSecondaryEmail = getMeta('ol-cannot-add-secondary-email')
 
   return (
     <>
@@ -39,14 +36,17 @@ function EmailsSectionContent() {
             // eslint-disable-next-line react/jsx-key
             <strong />,
             // eslint-disable-next-line jsx-a11y/anchor-has-content, react/jsx-key
-            <a href="/learn/how-to/Managing_your_Overleaf_emails" />,
+            <a
+              href="/learn/how-to/Managing_your_Overleaf_emails"
+              target="_blank"
+            />,
           ]}
         />
       </p>
       <>
         <EmailsHeader />
         {isInitializing ? (
-          <div className="affiliations-table-row--highlighted">
+          <div className="affiliations-table-row-highlighted">
             <div className="affiliations-table-cell text-center">
               <Icon type="refresh" fw spin /> {t('loading')}...
             </div>
@@ -64,10 +64,14 @@ function EmailsSectionContent() {
         {isInitializingSuccess && <LeaversSurveyAlert />}
         {isInitializingSuccess && !hideAddSecondaryEmail && <AddEmail />}
         {isInitializingError && (
-          <Alert bsStyle="danger" className="text-center">
-            <Icon type="exclamation-triangle" fw />{' '}
-            {t('error_performing_request')}
-          </Alert>
+          <OLNotification
+            type="error"
+            content={t('error_performing_request')}
+            bs3Props={{
+              icon: <Icon type="exclamation-triangle" fw />,
+              className: 'text-center',
+            }}
+          />
         )}
       </>
     </>
@@ -75,9 +79,7 @@ function EmailsSectionContent() {
 }
 
 function EmailsSection() {
-  const { hasAffiliationsFeature } = getMeta(
-    'ol-ExposedSettings'
-  ) as ExposedSettings
+  const { hasAffiliationsFeature } = getMeta('ol-ExposedSettings')
   if (!hasAffiliationsFeature) {
     return null
   }

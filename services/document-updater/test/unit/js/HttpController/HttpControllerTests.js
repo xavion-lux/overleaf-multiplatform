@@ -11,10 +11,13 @@ describe('HttpController', function () {
         './HistoryManager': (this.HistoryManager = {
           flushProjectChangesAsync: sinon.stub(),
         }),
+        './ProjectHistoryRedisManager': (this.ProjectHistoryRedisManager = {}),
         './ProjectManager': (this.ProjectManager = {}),
         './ProjectFlusher': { flushAllProjects() {} },
         './DeleteQueueManager': (this.DeleteQueueManager = {}),
-        './RedisManager': (this.RedisManager = {}),
+        './RedisManager': (this.RedisManager = {
+          DOC_OPS_TTL: 42,
+        }),
         './Metrics': (this.Metrics = {}),
         './Errors': Errors,
         '@overleaf/settings': { max_doc_length: 2 * 1024 * 1024 },
@@ -83,6 +86,7 @@ describe('HttpController', function () {
             ops: [],
             ranges: this.ranges,
             pathname: this.pathname,
+            ttlInS: 42,
           })
           .should.equal(true)
       })
@@ -133,6 +137,7 @@ describe('HttpController', function () {
             ops: this.ops,
             ranges: this.ranges,
             pathname: this.pathname,
+            ttlInS: 42,
           })
           .should.equal(true)
       })
@@ -649,8 +654,9 @@ describe('HttpController', function () {
     })
   })
 
-  describe('deleteComment', function () {
+  describe('resolveComment', function () {
     beforeEach(function () {
+      this.user_id = 'user-id-123'
       this.req = {
         params: {
           project_id: this.project_id,
@@ -658,7 +664,152 @@ describe('HttpController', function () {
           comment_id: (this.comment_id = 'mock-comment-id'),
         },
         query: {},
-        body: {},
+        body: {
+          user_id: this.user_id,
+        },
+      }
+      this.resolved = true
+    })
+
+    describe('successfully', function () {
+      beforeEach(function (done) {
+        this.DocumentManager.updateCommentStateWithLock = sinon
+          .stub()
+          .callsArgWith(5)
+
+        this.ProjectHistoryRedisManager.queueOps = sinon.stub()
+        this.res.sendStatus.callsFake(() => done())
+        this.HttpController.resolveComment(this.req, this.res, this.next)
+      })
+
+      it('should accept the change', function () {
+        this.DocumentManager.updateCommentStateWithLock
+          .calledWith(
+            this.project_id,
+            this.doc_id,
+            this.comment_id,
+            this.user_id,
+            this.resolved
+          )
+          .should.equal(true)
+      })
+
+      it('should return a successful No Content response', function () {
+        this.res.sendStatus.calledWith(204).should.equal(true)
+      })
+
+      it('should log the request', function () {
+        this.logger.debug
+          .calledWith(
+            {
+              projectId: this.project_id,
+              docId: this.doc_id,
+              commentId: this.comment_id,
+            },
+            'resolving comment via http'
+          )
+          .should.equal(true)
+      })
+    })
+
+    describe('when an errors occurs', function () {
+      beforeEach(function () {
+        this.DocumentManager.updateCommentStateWithLock = sinon
+          .stub()
+          .callsArgWith(5, new Error('oops'))
+        this.HttpController.resolveComment(this.req, this.res, this.next)
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+    })
+  })
+
+  describe('reopenComment', function () {
+    beforeEach(function () {
+      this.user_id = 'user-id-123'
+      this.req = {
+        params: {
+          project_id: this.project_id,
+          doc_id: this.doc_id,
+          comment_id: (this.comment_id = 'mock-comment-id'),
+        },
+        query: {},
+        body: {
+          user_id: this.user_id,
+        },
+      }
+      this.resolved = false
+    })
+
+    describe('successfully', function () {
+      beforeEach(function () {
+        this.DocumentManager.updateCommentStateWithLock = sinon
+          .stub()
+          .callsArgWith(5)
+
+        this.ProjectHistoryRedisManager.queueOps = sinon.stub()
+        this.HttpController.reopenComment(this.req, this.res, this.next)
+      })
+
+      it('should accept the change', function () {
+        this.DocumentManager.updateCommentStateWithLock
+          .calledWith(
+            this.project_id,
+            this.doc_id,
+            this.comment_id,
+            this.user_id,
+            this.resolved
+          )
+          .should.equal(true)
+      })
+
+      it('should return a successful No Content response', function () {
+        this.res.sendStatus.calledWith(204).should.equal(true)
+      })
+
+      it('should log the request', function () {
+        this.logger.debug
+          .calledWith(
+            {
+              projectId: this.project_id,
+              docId: this.doc_id,
+              commentId: this.comment_id,
+            },
+            'reopening comment via http'
+          )
+          .should.equal(true)
+      })
+    })
+
+    describe('when an errors occurs', function () {
+      beforeEach(function () {
+        this.DocumentManager.updateCommentStateWithLock = sinon
+          .stub()
+          .callsArgWith(5, new Error('oops'))
+        this.HttpController.reopenComment(this.req, this.res, this.next)
+      })
+
+      it('should call next with the error', function () {
+        this.next.calledWith(sinon.match.instanceOf(Error)).should.equal(true)
+      })
+    })
+  })
+
+  describe('deleteComment', function () {
+    beforeEach(function () {
+      this.user_id = 'user-id-123'
+      this.req = {
+        params: {
+          project_id: this.project_id,
+          doc_id: this.doc_id,
+          comment_id: (this.comment_id = 'mock-comment-id'),
+        },
+        query: {},
+        body: {
+          user_id: this.user_id,
+        },
       }
     })
 
@@ -666,13 +817,20 @@ describe('HttpController', function () {
       beforeEach(function () {
         this.DocumentManager.deleteCommentWithLock = sinon
           .stub()
-          .callsArgWith(3)
+          .callsArgWith(4)
+
+        this.ProjectHistoryRedisManager.queueOps = sinon.stub()
         this.HttpController.deleteComment(this.req, this.res, this.next)
       })
 
       it('should accept the change', function () {
         this.DocumentManager.deleteCommentWithLock
-          .calledWith(this.project_id, this.doc_id, this.comment_id)
+          .calledWith(
+            this.project_id,
+            this.doc_id,
+            this.comment_id,
+            this.user_id
+          )
           .should.equal(true)
       })
 
@@ -702,7 +860,7 @@ describe('HttpController', function () {
       beforeEach(function () {
         this.DocumentManager.deleteCommentWithLock = sinon
           .stub()
-          .callsArgWith(3, new Error('oops'))
+          .callsArgWith(4, new Error('oops'))
         this.HttpController.deleteComment(this.req, this.res, this.next)
       })
 
@@ -912,7 +1070,7 @@ describe('HttpController', function () {
 
     describe('successfully', function () {
       beforeEach(function () {
-        this.HistoryManager.resyncProjectHistory = sinon.stub().callsArgWith(4)
+        this.HistoryManager.resyncProjectHistory = sinon.stub().callsArgWith(5)
         this.HttpController.resyncProjectHistory(this.req, this.res, this.next)
       })
 
@@ -922,13 +1080,14 @@ describe('HttpController', function () {
             this.project_id,
             this.projectHistoryId,
             this.docs,
-            this.files
+            this.files,
+            {}
           )
           .should.equal(true)
       })
 
       it('should return a successful No Content response', function () {
-        this.res.sendStatus.calledWith(204).should.equal(true)
+        this.res.sendStatus.should.have.been.calledWith(204)
       })
     })
 
@@ -936,7 +1095,7 @@ describe('HttpController', function () {
       beforeEach(function () {
         this.HistoryManager.resyncProjectHistory = sinon
           .stub()
-          .callsArgWith(4, new Error('oops'))
+          .callsArgWith(5, new Error('oops'))
         this.HttpController.resyncProjectHistory(this.req, this.res, this.next)
       })
 

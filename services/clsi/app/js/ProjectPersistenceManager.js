@@ -88,15 +88,18 @@ module.exports = ProjectPersistenceManager = {
           })
         },
         () => {
-          setInterval(() => {
-            ProjectPersistenceManager.refreshExpiryTimeout(() => {
-              ProjectPersistenceManager.clearExpiredProjects(err => {
-                if (err) {
-                  logger.error({ err }, 'clearing expired projects failed')
-                }
+          setInterval(
+            () => {
+              ProjectPersistenceManager.refreshExpiryTimeout(() => {
+                ProjectPersistenceManager.clearExpiredProjects(err => {
+                  if (err) {
+                    logger.error({ err }, 'clearing expired projects failed')
+                  }
+                })
               })
-            })
-          }, 10 * 60 * 1000)
+            },
+            10 * 60 * 1000
+          )
         }
       )
     })
@@ -111,38 +114,38 @@ module.exports = ProjectPersistenceManager = {
     if (callback == null) {
       callback = function () {}
     }
-    return ProjectPersistenceManager._findExpiredProjectIds(function (
-      error,
-      projectIds
-    ) {
-      if (error != null) {
-        return callback(error)
-      }
-      logger.debug({ projectIds }, 'clearing expired projects')
-      const jobs = Array.from(projectIds || []).map(projectId =>
-        (
-          projectId => callback =>
-            ProjectPersistenceManager.clearProjectFromCache(
-              projectId,
-              function (err) {
-                if (err != null) {
-                  logger.error({ err, projectId }, 'error clearing project')
-                }
-                return callback()
-              }
-            )
-        )(projectId)
-      )
-      return async.series(jobs, function (error) {
+    return ProjectPersistenceManager._findExpiredProjectIds(
+      function (error, projectIds) {
         if (error != null) {
           return callback(error)
         }
-        return CompileManager.clearExpiredProjects(
-          ProjectPersistenceManager.EXPIRY_TIMEOUT,
-          error => callback(error)
+        logger.debug({ projectIds }, 'clearing expired projects')
+        const jobs = Array.from(projectIds || []).map(projectId =>
+          (
+            projectId => callback =>
+              ProjectPersistenceManager.clearProjectFromCache(
+                projectId,
+                { reason: 'expired' },
+                function (err) {
+                  if (err != null) {
+                    logger.error({ err, projectId }, 'error clearing project')
+                  }
+                  return callback()
+                }
+              )
+          )(projectId)
         )
-      })
-    })
+        return async.series(jobs, function (error) {
+          if (error != null) {
+            return callback(error)
+          }
+          return CompileManager.clearExpiredProjects(
+            ProjectPersistenceManager.EXPIRY_TIMEOUT,
+            error => callback(error)
+          )
+        })
+      }
+    )
   }, // ignore any errors from deleting directories
 
   clearProject(projectId, userId, callback) {
@@ -156,6 +159,7 @@ module.exports = ProjectPersistenceManager = {
       }
       return ProjectPersistenceManager.clearProjectFromCache(
         projectId,
+        { reason: 'cleared' },
         function (error) {
           if (error != null) {
             return callback(error)
@@ -166,12 +170,12 @@ module.exports = ProjectPersistenceManager = {
     })
   },
 
-  clearProjectFromCache(projectId, callback) {
+  clearProjectFromCache(projectId, options, callback) {
     if (callback == null) {
       callback = function () {}
     }
     logger.debug({ projectId }, 'clearing project from cache')
-    return UrlCache.clearProject(projectId, function (error) {
+    return UrlCache.clearProject(projectId, options, function (error) {
       if (error != null) {
         logger.err({ error, projectId }, 'error clearing project from cache')
         return callback(error)

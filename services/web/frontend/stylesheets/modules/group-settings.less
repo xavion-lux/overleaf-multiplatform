@@ -77,11 +77,16 @@ h3.group-settings-title {
     color: @gray-dark;
     font-size: @font-size-small;
     padding-left: 0;
+    text-wrap: wrap;
   }
 
   .btn {
     width: 100%;
     margin: 8px 0;
+  }
+  .btn-link-logout {
+    width: auto;
+    margin: 0;
   }
 }
 
@@ -100,6 +105,10 @@ h3.group-settings-title {
     display: flex;
     align-items: center;
     justify-content: space-between;
+
+    .group-settings-sso-action-col {
+      margin-left: 16px;
+    }
   }
 }
 
@@ -140,19 +149,57 @@ h3.group-settings-title {
     }
   }
 
+  .sso-config-options-buttons {
+    button:not(:last-child) {
+      margin-right: 8px;
+    }
+  }
+
   .sso-config-info-section {
     margin-bottom: @margin-md;
     padding: 0 @padding-base-horizontal;
+
+    &:last-child {
+      margin-bottom: 0;
+    }
   }
 
   .sso-config-info-label {
     font-size: @font-size-small;
     font-weight: bold;
+
+    .certificate-status {
+      font-weight: normal;
+
+      .material-symbols {
+        vertical-align: top;
+      }
+
+      &.certificate-valid {
+        color: @ol-green;
+      }
+
+      &.certificate-expiring-soon {
+        color: @yellow-50;
+      }
+
+      &.certificate-expired {
+        color: @red-50;
+      }
+    }
+  }
+
+  .sso-config-info-label-optional {
+    font-weight: normal;
   }
 
   .sso-config-info-content {
     color: @gray-darker;
     word-break: break-word;
+  }
+
+  .sso-config-info-content-empty {
+    color: var(--neutral-60);
   }
 
   p {
@@ -211,19 +258,106 @@ h3.group-settings-title {
       padding-right: 0;
     }
   }
+
+  .payload-content {
+    padding: @padding-base-horizontal;
+    border: 1px solid @neutral-20;
+    margin-top: 16px;
+    border-radius: @border-radius-base-new;
+    color: black;
+
+    .saml-response-xml-wrapper {
+      margin-top: 16px;
+      overflow: hidden;
+      background-color: @neutral-10;
+      border-radius: @border-radius-base-new;
+
+      .saml-response-header {
+        font-family: Lato, sans-serif;
+        font-size: 16px;
+        font-weight: bold;
+        padding: 0 16px;
+        border-bottom: 1px solid @neutral-20;
+        line-height: 56px;
+
+        .copy-response {
+          vertical-align: bottom;
+          margin-top: 10px;
+
+          .material-symbols {
+            vertical-align: text-top;
+          }
+        }
+      }
+
+      .saml-response-footer {
+        text-align: center;
+        line-height: 56px;
+        position: sticky;
+        bottom: 0;
+        background: linear-gradient(
+          360deg,
+          #f4f5f6 0%,
+          rgba(244, 245, 246, 0) 835.48%
+        );
+      }
+
+      .saml-response-xml {
+        font-family: 'DM Mono', monospace;
+        white-space: pre-wrap;
+        font-size: 13px;
+        word-break: break-word;
+        padding: 16px 16px 0 16px;
+        height: 100px;
+        min-height: 100px;
+
+        &.view-more {
+          height: auto;
+        }
+      }
+
+      .expand-viewer {
+        .material-symbols {
+          vertical-align: bottom;
+          font-size: 24px;
+        }
+      }
+    }
+
+    .payload-content-user-info-item {
+      margin-bottom: @margin-xs;
+      display: inline-block;
+      width: 100%;
+      overflow-wrap: break-word;
+    }
+  }
 }
 
 .certificate-wrapper {
-  display: flex;
-  align-items: baseline;
-
-  &.certificate-full {
-    flex-wrap: wrap;
+  .certificate-delete {
+    text-decoration: none;
+    margin-left: 16px;
+    span {
+      vertical-align: middle;
+    }
   }
 
+  .certificate-delete,
+  .view-more {
+    padding: 0;
+  }
+}
+
+.certificate-truncated {
+  display: flex;
+  align-items: center;
   .view-more {
     flex-grow: 0;
     flex-shrink: 0;
+    margin-left: 16px;
+  }
+  .certificate-delete {
+    display: inline-flex;
   }
 }
 
@@ -239,11 +373,7 @@ h3.group-settings-title {
   }
   .certificate-full & {
     word-break: break-all;
-
-    .break {
-      flex-basis: 100%;
-      height: 0;
-    }
+    display: block;
   }
 }
 
@@ -260,27 +390,6 @@ h3.group-settings-title {
   }
 }
 
-.saml-response-xml-wrapper {
-  padding: 4px 0;
-  overflow: hidden;
-  background-color: @neutral-10;
-
-  .saml-response-xml {
-    font-family: monospace;
-    white-space: pre-wrap;
-    font-size: 12px;
-    word-break: break-word;
-    padding-inline-start: 32px;
-    height: 32px;
-
-    &.view-more {
-      height: auto;
-    }
-
-    li::marker {
-      font-size: 10px;
-      color: @gray-light;
-      width: 10px;
-    }
-  }
+.btn-import-metadata {
+  margin-left: 8px;
 }

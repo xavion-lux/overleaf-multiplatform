@@ -4,6 +4,7 @@ const _ = require('lodash')
 const { expect } = require('chai')
 
 const ot = require('..')
+const StringFileData = require('../lib/file_data/string_file_data')
 const File = ot.File
 const AddFileOperation = ot.AddFileOperation
 const MoveFileOperation = ot.MoveFileOperation
@@ -11,6 +12,9 @@ const EditFileOperation = ot.EditFileOperation
 const NoOperation = ot.NoOperation
 const Operation = ot.Operation
 const TextOperation = ot.TextOperation
+const AddCommentOperation = ot.AddCommentOperation
+const DeleteCommentOperation = ot.DeleteCommentOperation
+const SetCommentStateOperation = ot.SetCommentStateOperation
 const Snapshot = ot.Snapshot
 
 describe('Operation', function () {
@@ -71,7 +75,12 @@ describe('Operation', function () {
       },
 
       expectNoTransform() {
-        expect(this.operations).to.eql(this.primeOperations)
+        expect(this.operations).to.deep.eql(this.primeOperations)
+        return this
+      },
+
+      expectTransform() {
+        expect(this.operations).to.not.deep.eql(this.primeOperations)
         return this
       },
 
@@ -84,11 +93,14 @@ describe('Operation', function () {
         expect(this.snapshot.countFiles()).to.equal(_.size(files))
         _.forOwn(files, (expectedFile, pathname) => {
           if (_.isString(expectedFile)) {
-            expectedFile = { content: expectedFile, metadata: {} }
+            expectedFile = { content: expectedFile, metadata: {}, comments: [] }
           }
           const file = this.snapshot.getFile(pathname)
           expect(file.getContent()).to.equal(expectedFile.content)
           expect(file.getMetadata()).to.eql(expectedFile.metadata)
+          expect(file.getComments().toRaw()).to.deep.equal(
+            expectedFile.comments
+          )
         })
         return this
       },
@@ -114,10 +126,10 @@ describe('Operation', function () {
   }
 
   // shorthand for creating an edit operation
-  function edit(pathname, textOperationJsonObject) {
+  function edit(pathname, textOperationOps) {
     return Operation.editFile(
       pathname,
-      TextOperation.fromJSON(textOperationJsonObject)
+      TextOperation.fromJSON({ textOperation: textOperationOps })
     )
   }
 
@@ -240,7 +252,10 @@ describe('Operation', function () {
       makeOneFileSnapshot()
     )
       .expectNoTransform()
-      .expectFiles({ foo: { content: '', metadata: testMetadata }, bar: 'a' })
+      .expectFiles({
+        foo: { content: '', metadata: testMetadata, comments: [] },
+        bar: 'a',
+      })
       .expectSymmetry()
   })
 
@@ -251,7 +266,9 @@ describe('Operation', function () {
       Operation.setFileMetadata('foo', testMetadata),
       makeEmptySnapshot()
     )
-      .expectFiles({ foo: { content: 'x', metadata: testMetadata } })
+      .expectFiles({
+        foo: { content: 'x', metadata: testMetadata, comments: [] },
+      })
       .expectSymmetry()
   })
 
@@ -574,7 +591,10 @@ describe('Operation', function () {
       makeTwoFileSnapshot()
     )
       .expectNoTransform()
-      .expectFiles({ bar: { content: 'a', metadata: testMetadata }, baz: '' })
+      .expectFiles({
+        bar: { content: 'a', metadata: testMetadata, comments: [] },
+        baz: '',
+      })
       .expectSymmetry()
   })
 
@@ -585,7 +605,9 @@ describe('Operation', function () {
       Operation.setFileMetadata('foo', testMetadata),
       makeOneFileSnapshot()
     )
-      .expectFiles({ bar: { content: '', metadata: testMetadata } })
+      .expectFiles({
+        bar: { content: '', metadata: testMetadata, comments: [] },
+      })
       .expectSymmetry()
   })
 
@@ -597,7 +619,7 @@ describe('Operation', function () {
       makeTwoFileSnapshot()
     )
       // move wins
-      .expectFiles({ bar: { content: '', metadata: {} } })
+      .expectFiles({ bar: { content: '', metadata: {}, comments: [] } })
       .expectSymmetry()
   })
 
@@ -608,7 +630,9 @@ describe('Operation', function () {
       Operation.setFileMetadata('foo', testMetadata),
       makeOneFileSnapshot()
     )
-      .expectFiles({ foo: { content: '', metadata: testMetadata } })
+      .expectFiles({
+        foo: { content: '', metadata: testMetadata, comments: [] },
+      })
       .expectSymmetry()
   })
 
@@ -633,14 +657,12 @@ describe('Operation', function () {
       .expectPrime(1, EditFileOperation)
       .expectPrime(0, EditFileOperation)
       .tap(function () {
-        expect(this.primeOperations[1].getTextOperation().toJSON()).to.eql([
-          1,
-          'y',
-        ])
-        expect(this.primeOperations[0].getTextOperation().toJSON()).to.eql([
-          'x',
-          1,
-        ])
+        expect(this.primeOperations[1].getOperation().toJSON()).to.eql({
+          textOperation: [1, 'y'],
+        })
+        expect(this.primeOperations[0].getOperation().toJSON()).to.eql({
+          textOperation: ['x', 1],
+        })
       })
       .swap()
       .expectFiles({ foo: 'yx' })
@@ -676,8 +698,8 @@ describe('Operation', function () {
     )
       .expectNoTransform()
       .expectFiles({
-        foo: { content: 'x', metadata: {} },
-        bar: { content: 'a', metadata: testMetadata },
+        foo: { content: 'x', metadata: {}, comments: [] },
+        bar: { content: 'a', metadata: testMetadata, comments: [] },
       })
       .expectSymmetry()
   })
@@ -690,7 +712,9 @@ describe('Operation', function () {
       makeOneFileSnapshot()
     )
       .expectNoTransform()
-      .expectFiles({ foo: { content: 'x', metadata: testMetadata } })
+      .expectFiles({
+        foo: { content: 'x', metadata: testMetadata, comments: [] },
+      })
       .expectSymmetry()
   })
 
@@ -702,8 +726,8 @@ describe('Operation', function () {
     )
       .expectNoTransform()
       .expectFiles({
-        foo: { content: '', metadata: { baz: 1 } },
-        bar: { content: 'a', metadata: { baz: 2 } },
+        foo: { content: '', metadata: { baz: 1 }, comments: [] },
+        bar: { content: 'a', metadata: { baz: 2 }, comments: [] },
       })
       .expectSymmetry()
   })
@@ -715,10 +739,10 @@ describe('Operation', function () {
       makeOneFileSnapshot()
     )
       // second op wins
-      .expectFiles({ foo: { content: '', metadata: { baz: 2 } } })
+      .expectFiles({ foo: { content: '', metadata: { baz: 2 }, comments: [] } })
       .swap()
       // first op wins
-      .expectFiles({ foo: { content: '', metadata: { baz: 1 } } })
+      .expectFiles({ foo: { content: '', metadata: { baz: 1 }, comments: [] } })
   })
 
   it('transforms SetFileMetadata-RemoveFile with no conflict', function () {
@@ -729,7 +753,9 @@ describe('Operation', function () {
       makeTwoFileSnapshot()
     )
       .expectNoTransform()
-      .expectFiles({ foo: { content: '', metadata: testMetadata } })
+      .expectFiles({
+        foo: { content: '', metadata: testMetadata, comments: [] },
+      })
       .expectSymmetry()
   })
 
@@ -742,5 +768,307 @@ describe('Operation', function () {
     )
       .expectFiles({})
       .expectSymmetry()
+  })
+
+  it('transforms no-op with other operation', function () {
+    runConcurrently(Operation.NO_OP, addFile('foo', 'test')).expectFiles({
+      foo: 'test',
+    })
+  })
+
+  describe('EditFile sub operations', function () {
+    it('transforms AddCommentOperation-AddCommentOperation', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [
+              {
+                pos: 10,
+                length: 2,
+              },
+            ],
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [
+              {
+                pos: 0,
+                length: 1,
+              },
+            ],
+          })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: '',
+            metadata: {},
+            comments: [
+              {
+                id: '1',
+                ranges: [
+                  {
+                    pos: 0,
+                    length: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        })
+    })
+
+    it('transforms TextOperation-AddCommentOperation', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          TextOperation.fromJSON({ textOperation: ['xyz'] })
+        ),
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [
+              {
+                pos: 0,
+                length: 1,
+              },
+            ],
+          })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: 'xyz',
+            metadata: {},
+            comments: [{ id: '1', ranges: [{ pos: 3, length: 1 }] }],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms TextOperation-AddCommentOperation (insert with commentId)', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          TextOperation.fromJSON({
+            textOperation: [{ i: 'xyz', commentIds: ['1'] }],
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [
+              {
+                pos: 0,
+                length: 1,
+              },
+            ],
+          })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: 'xyz',
+            metadata: {},
+            comments: [{ id: '1', ranges: [{ pos: 0, length: 4 }] }],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms AddCommentOperation-SetCommentStateOperation', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [{ pos: 1, length: 2 }],
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: true,
+          })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: '',
+            metadata: {},
+            comments: [
+              { id: '1', ranges: [{ pos: 1, length: 2 }], resolved: true },
+            ],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms AddCommentOperation-DeleteCommentOperation ', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          AddCommentOperation.fromJSON({
+            commentId: '1',
+            ranges: [{ pos: 1, length: 2 }],
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          DeleteCommentOperation.fromJSON({ deleteComment: '1' })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: '',
+            metadata: {},
+            comments: [],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms DeleteCommentOperation-SetCommentStateOperation ', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          DeleteCommentOperation.fromJSON({ deleteComment: '1' })
+        ),
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: true,
+          })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: '',
+            metadata: {},
+            comments: [],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms DeleteCommentOperation-DeleteCommentOperation ', function () {
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          DeleteCommentOperation.fromJSON({ deleteComment: '1' })
+        ),
+        Operation.editFile(
+          'foo',
+          DeleteCommentOperation.fromJSON({ deleteComment: '1' })
+        ),
+        makeOneFileSnapshot()
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: '',
+            metadata: {},
+            comments: [],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms SetCommentStateOperation-SetCommentStateOperation to resolved comment', function () {
+      const snapshot = makeEmptySnapshot()
+      const file = new File(
+        new StringFileData('xyz', [
+          { id: '1', ranges: [{ pos: 0, length: 3 }] },
+        ])
+      )
+      snapshot.addFile('foo', file)
+
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: true,
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: true,
+          })
+        ),
+        snapshot
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: 'xyz',
+            metadata: {},
+            comments: [
+              { id: '1', ranges: [{ pos: 0, length: 3 }], resolved: true },
+            ],
+          },
+        })
+        .expectSymmetry()
+    })
+
+    it('transforms SetCommentStateOperation-SetCommentStateOperation to unresolved comment', function () {
+      const snapshot = makeEmptySnapshot()
+      const file = new File(
+        new StringFileData('xyz', [
+          { id: '1', ranges: [{ pos: 0, length: 3 }] },
+        ])
+      )
+      snapshot.addFile('foo', file)
+
+      runConcurrently(
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: true,
+          })
+        ),
+        Operation.editFile(
+          'foo',
+          SetCommentStateOperation.fromJSON({
+            commentId: '1',
+            resolved: false,
+          })
+        ),
+        snapshot
+      )
+        .expectTransform()
+        .expectFiles({
+          foo: {
+            content: 'xyz',
+            metadata: {},
+            comments: [{ id: '1', ranges: [{ pos: 0, length: 3 }] }],
+          },
+        })
+        .expectSymmetry()
+    })
   })
 })

@@ -4,11 +4,10 @@ import { isEqual, cloneDeep } from 'lodash'
 import usePersistedState from '@/shared/hooks/use-persisted-state'
 import useScopeValue from '../../../../../shared/hooks/use-scope-value'
 import useSocketListener from '@/features/ide-react/hooks/use-socket-listener'
-import useAsync from '@/shared/hooks/use-async'
 import useAbortController from '@/shared/hooks/use-abort-controller'
 import useScopeEventEmitter from '@/shared/hooks/use-scope-event-emitter'
 import useLayoutToLeft from '@/features/ide-react/context/review-panel/hooks/useLayoutToLeft'
-import { sendMB } from '../../../../../infrastructure/event-tracking'
+import { sendMB } from '@/infrastructure/event-tracking'
 import {
   dispatchReviewPanelLayout as handleLayoutChange,
   UpdateType,
@@ -25,12 +24,10 @@ import {
   useEditorManagerContext,
 } from '@/features/ide-react/context/editor-manager-context'
 import { debugConsole } from '@/utils/debugging'
-import { useEditorContext } from '@/shared/context/editor-context'
 import { deleteJSON, getJSON, postJSON } from '@/infrastructure/fetch-json'
 import ColorManager from '@/ide/colors/ColorManager'
-// @ts-ignore
 import RangesTracker from '@overleaf/ranges-tracker'
-import * as ReviewPanel from '../types/review-panel-state'
+import type * as ReviewPanel from '@/features/source-editor/context/review-panel/types/review-panel-state'
 import {
   CommentId,
   ReviewPanelCommentThreadMessage,
@@ -41,7 +38,6 @@ import {
 } from '../../../../../../../types/review-panel/review-panel'
 import { UserId } from '../../../../../../../types/user'
 import { PublicAccessLevel } from '../../../../../../../types/public-access-level'
-import { ReviewPanelStateReactIde } from '../types/review-panel-state'
 import {
   DeepReadonly,
   Entries,
@@ -62,6 +58,14 @@ import {
   ReviewPanelCommentThreadsApi,
 } from '../../../../../../../types/review-panel/api'
 import { DateString } from '../../../../../../../types/helpers/date'
+import {
+  Change,
+  CommentOperation,
+  EditOperation,
+} from '../../../../../../../types/change'
+import { RangesTrackerWithResolvedThreadIds } from '@/features/ide-react/editor/document-container'
+import getMeta from '@/utils/meta'
+import { useEditorContext } from '@/shared/context/editor-context'
 
 const dispatchReviewPanelEvent = (type: string, payload?: any) => {
   window.dispatchEvent(
@@ -86,7 +90,7 @@ const formatUser = (user: any): any => {
       avatar_text: 'A',
     }
   }
-  if (id === window.user_id) {
+  if (id === getMeta('ol-user_id')) {
     name = 'You'
     isSelf = true
   } else {
@@ -121,7 +125,7 @@ const formatComment = (
   return commentTyped
 }
 
-function useReviewPanelState(): ReviewPanelStateReactIde {
+function useReviewPanelState(): ReviewPanel.ReviewPanelState {
   const { t } = useTranslation()
   const { reviewPanelOpen, setReviewPanelOpen, setMiniReviewPanelVisible } =
     useLayoutContext()
@@ -167,10 +171,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     ReviewPanel.Value<'commentThreads'>
   >({})
   const [entries, setEntries] = useState<ReviewPanel.Value<'entries'>>({})
-  const [users, setUsers] = useScopeValue<ReviewPanel.Value<'users'>>(
-    'users',
-    true
-  )
+  const [users, setUsers] = useScopeValue<ReviewPanel.Value<'users'>>('users')
   const [resolvedComments, setResolvedComments] = useState<
     ReviewPanel.Value<'resolvedComments'>
   >({})
@@ -197,26 +198,25 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     Record<ThreadId, boolean>
   >({})
 
-  const {
-    isLoading: loadingThreads,
-    reset,
-    runAsync: runAsyncThreads,
-  } = useAsync<ReviewPanelCommentThreadsApi>()
+  const [loadingThreads, setLoadingThreads] =
+    useScopeValue<boolean>('loadingThreads')
+
   const loadThreadsController = useAbortController()
-  const loadThreadsExecuted = useRef(false)
+  const threadsLoadedOnceRef = useRef(false)
+  const loadingThreadsInProgressRef = useRef(false)
   const ensureThreadsAreLoaded = useCallback(() => {
-    if (loadThreadsExecuted.current) {
+    if (threadsLoadedOnceRef.current) {
       // We get any updates in real time so only need to load them once.
       return
     }
-    loadThreadsExecuted.current = true
+    threadsLoadedOnceRef.current = true
+    loadingThreadsInProgressRef.current = true
 
-    return runAsyncThreads(
-      getJSON(`/project/${projectId}/threads`, {
-        signal: loadThreadsController.signal,
-      })
-    )
+    return getJSON(`/project/${projectId}/threads`, {
+      signal: loadThreadsController.signal,
+    })
       .then(threads => {
+        setLoadingThreads(false)
         const tempResolvedThreadIds: typeof resolvedThreadIds = {}
         const threadsEntries = Object.entries(threads) as [
           [
@@ -224,8 +224,8 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
             MergeAndOverride<
               ReviewPanelCommentThread,
               ReviewPanelCommentThreadsApi[ThreadId]
-            >
-          ]
+            >,
+          ],
         ]
         for (const [threadId, thread] of threadsEntries) {
           for (const comment of thread.messages) {
@@ -248,9 +248,14 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
         }
       })
       .catch(debugConsole.error)
-  }, [loadThreadsController.signal, projectId, runAsyncThreads])
+      .finally(() => {
+        loadingThreadsInProgressRef.current = false
+      })
+  }, [loadThreadsController.signal, projectId, setLoadingThreads])
 
-  const rangesTrackers = useRef<Record<DocId, RangesTracker>>({})
+  const rangesTrackers = useRef<
+    Record<DocId, RangesTrackerWithResolvedThreadIds>
+  >({})
   const refreshingRangeUsers = useRef(false)
   const refreshedForUserIds = useRef(new Set<UserId>())
   const refreshChangeUsers = useCallback(
@@ -275,7 +280,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
           const tempUsers = {} as ReviewPanel.Value<'users'>
           // Always include ourself, since if we submit an op, we might need to display info
           // about it locally before it has been flushed through the server
-          if (user) {
+          if (user?.id) {
             tempUsers[user.id] = formatUser(user)
           }
 
@@ -298,12 +303,14 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   const getChangeTracker = useCallback(
     (docId: DocId) => {
       if (!rangesTrackers.current[docId]) {
-        rangesTrackers.current[docId] = new RangesTracker()
-        rangesTrackers.current[docId].resolvedThreadIds = {
-          ...resolvedThreadIds,
-        }
+        const rangesTracker = new RangesTracker([], [])
+        ;(
+          rangesTracker as RangesTrackerWithResolvedThreadIds
+        ).resolvedThreadIds = { ...resolvedThreadIds }
+        rangesTrackers.current[docId] =
+          rangesTracker as RangesTrackerWithResolvedThreadIds
       }
-      return rangesTrackers.current[docId]
+      return rangesTrackers.current[docId]!
     },
     [resolvedThreadIds]
   )
@@ -335,21 +342,6 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   const updateEntries = useCallback(
     async (docId: DocId) => {
       const rangesTracker = getChangeTracker(docId)
-      let localResolvedThreadIds = resolvedThreadIds
-
-      if (!isRestrictedTokenMember) {
-        if (rangesTracker.comments.length > 0) {
-          const threadsLoadResult = await ensureThreadsAreLoaded()
-          if (typeof threadsLoadResult === 'object') {
-            localResolvedThreadIds = threadsLoadResult.resolvedThreadIds
-          }
-        } else if (loadingThreads) {
-          // ensure that tracked changes are highlighted even if no comments are loaded
-          reset()
-          dispatchReviewPanelEvent('loaded_threads')
-        }
-      }
-
       const docEntries = cloneDeep(getDocEntries(docId))
       const docResolvedComments = cloneDeep(getDocResolvedComments(docId))
       // Assume we'll delete everything until we see it, then we'll remove it from this object
@@ -432,32 +424,40 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
         }
       }
 
-      for (const comment of rangesTracker.comments) {
-        deleteChanges.delete(comment.id)
+      let localResolvedThreadIds = resolvedThreadIds
 
-        const newEntry: Partial<ReviewPanelCommentEntry> = {
-          type: 'comment',
-          thread_id: comment.op.t,
-          entry_ids: [comment.id],
-          content: comment.op.c,
-          offset: comment.op.p,
+      if (!isRestrictedTokenMember && rangesTracker.comments.length > 0) {
+        const threadsLoadResult = await ensureThreadsAreLoaded()
+        if (threadsLoadResult?.resolvedThreadIds) {
+          localResolvedThreadIds = threadsLoadResult.resolvedThreadIds
         }
+      } else if (loadingThreads) {
+        // ensure that tracked changes are highlighted even if no comments are loaded
+        setLoadingThreads(false)
+        dispatchReviewPanelEvent('loaded_threads')
+      }
 
-        let newComment: any
-        if (localResolvedThreadIds[comment.op.t]) {
-          docResolvedComments[comment.id] ??= {} as ReviewPanelCommentEntry
-          newComment = docResolvedComments[comment.id]
-          delete docEntries[comment.id]
-        } else {
-          docEntries[comment.id] ??= {} as ReviewPanelEntry
-          newComment = docEntries[comment.id]
-          delete docResolvedComments[comment.id]
-        }
+      if (!loadingThreadsInProgressRef.current) {
+        for (const comment of rangesTracker.comments) {
+          const commentId = comment.id as ThreadId
+          deleteChanges.delete(commentId)
 
-        for (const [key, value] of Object.entries(newEntry) as Entries<
-          typeof newEntry
-        >) {
-          newComment[key] = value
+          let newComment: any
+          if (localResolvedThreadIds[comment.op.t]) {
+            docResolvedComments[commentId] ??= {} as ReviewPanelCommentEntry
+            newComment = docResolvedComments[commentId]
+            delete docEntries[commentId]
+          } else {
+            docEntries[commentId] ??= {} as ReviewPanelEntry
+            newComment = docEntries[commentId]
+            delete docResolvedComments[commentId]
+          }
+
+          newComment.type = 'comment'
+          newComment.thread_id = comment.op.t
+          newComment.entry_ids = [comment.id]
+          newComment.content = comment.op.c
+          newComment.offset = comment.op.p
         }
       }
 
@@ -483,13 +483,13 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
       getChangeTracker,
       getDocEntries,
       getDocResolvedComments,
-      isRestrictedTokenMember,
       refreshChangeUsers,
       resolvedThreadIds,
       users,
       ensureThreadsAreLoaded,
       loadingThreads,
-      reset,
+      setLoadingThreads,
+      isRestrictedTokenMember,
     ]
   )
 
@@ -510,10 +510,12 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     }
     // The open doc range tracker is kept up to date in real-time so
     // replace any outdated info with this
+    const rangesTracker = currentDocument.ranges!
+    ;(rangesTracker as RangesTrackerWithResolvedThreadIds).resolvedThreadIds = {
+      ...resolvedThreadIds,
+    }
     rangesTrackers.current[currentDocument.doc_id as DocId] =
-      currentDocument.ranges
-    rangesTrackers.current[currentDocument.doc_id as DocId].resolvedThreadIds =
-      { ...resolvedThreadIds }
+      rangesTracker as RangesTrackerWithResolvedThreadIds
     currentDocument.on('flipped_pending_to_inflight', () =>
       regenerateTrackChangesId(currentDocument)
     )
@@ -528,7 +530,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     if (!user) {
       return 'anonymous'
     }
-    if (project.owner === user.id) {
+    if (project.owner._id === user.id) {
       return 'member'
     }
     for (const member of project.members as any[]) {
@@ -558,8 +560,8 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
           [
             UserId,
             NonNullable<
-              typeof trackChangesState[keyof typeof trackChangesState]
-            >
+              (typeof trackChangesState)[keyof typeof trackChangesState]
+            >,
           ]
         >
         for (const [userId, { value }] of entries) {
@@ -598,7 +600,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
       }
       const state =
         newTrackChangesState[userId] ??
-        ({} as NonNullable<typeof newTrackChangesState[UserId]>)
+        ({} as NonNullable<(typeof newTrackChangesState)[UserId]>)
       newTrackChangesState[userId] = state
 
       if (state.syncState == null || state.syncState === 'synced') {
@@ -716,7 +718,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   )
 
   const applyTrackChangesStateToClient = useCallback(
-    (state: boolean | Record<UserId, boolean>) => {
+    (state: boolean | Record<UserId | '__guests__', boolean>) => {
       if (typeof state === 'boolean') {
         setEveryoneTCState(state)
         setGuestsTCState(state)
@@ -733,13 +735,13 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
           newTrackChangesState = setUserTCState(
             newTrackChangesState,
             member._id,
-            state[member._id] ?? false
+            !!state[member._id]
           )
         }
         newTrackChangesState = setUserTCState(
           newTrackChangesState,
           project.owner._id,
-          state[project.owner._id] ?? false
+          !!state[project.owner._id]
         )
         return newTrackChangesState
       }
@@ -755,7 +757,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   )
 
   const setGuestFeatureBasedOnProjectAccessLevel = (
-    projectPublicAccessLevel: PublicAccessLevel
+    projectPublicAccessLevel?: PublicAccessLevel
   ) => {
     setTrackChangesForGuestsAvailable(projectPublicAccessLevel === 'tokenBased')
   }
@@ -891,7 +893,9 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
         },
       }))
 
-      postJSON(`/project/${projectId}/thread/${entry.thread_id}/resolve`)
+      postJSON(
+        `/project/${projectId}/doc/${docId}/thread/${entry.thread_id}/resolve`
+      )
       onCommentResolved(entry.thread_id, user)
       sendMB('rp-comment-resolve', { view })
     },
@@ -918,9 +922,9 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   )
 
   const unresolveComment = useCallback(
-    (threadId: ThreadId) => {
+    (docId: DocId, threadId: ThreadId) => {
       onCommentReopened(threadId)
-      const url = `/project/${projectId}/thread/${threadId}/reopen`
+      const url = `/project/${projectId}/doc/${docId}/thread/${threadId}/reopen`
       postJSON(url).catch(debugConsole.error)
       sendMB('rp-comment-reopen')
     },
@@ -948,19 +952,18 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     [onThreadDeleted, projectId]
   )
 
-  const onCommentEdited: ReviewPanel.UpdaterFn<'saveEdit'> = (
-    threadId: ThreadId,
-    commentId: CommentId,
-    content: string
-  ) => {
-    setCommentThreads(prevState => {
-      const thread = { ...getThread(threadId) }
-      thread.messages = thread.messages.map(message => {
-        return message.id === commentId ? { ...message, content } : message
+  const onCommentEdited = useCallback(
+    (threadId: ThreadId, commentId: CommentId, content: string) => {
+      setCommentThreads(prevState => {
+        const thread = { ...getThread(threadId) }
+        thread.messages = thread.messages.map(message => {
+          return message.id === commentId ? { ...message, content } : message
+        })
+        return { ...prevState, [threadId]: thread }
       })
-      return { ...prevState, [threadId]: thread }
-    })
-  }
+    },
+    [getThread]
+  )
 
   const saveEdit = useCallback(
     (threadId: ThreadId, commentId: CommentId, content: string) => {
@@ -1038,8 +1041,8 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     type Doc = {
       id: DocId
       ranges: {
-        comments?: unknown[]
-        changes?: unknown[]
+        comments?: Change<CommentOperation>[]
+        changes?: Change<EditOperation>[]
       }
     }
 
@@ -1123,7 +1126,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
       }
 
       const { offset, length } = addCommentEntry
-      const threadId = RangesTracker.generateId()
+      const threadId = RangesTracker.generateId() as ThreadId
       setCommentThreads(prevState => ({
         ...prevState,
         [threadId]: { ...getThread(threadId), submitting: true },
@@ -1174,14 +1177,14 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   }, [currentDocumentId, getDocEntries, trackChangesVisible])
 
   useEffect(() => {
-    setMiniReviewPanelVisible(!reviewPanelOpen && hasEntries)
+    setMiniReviewPanelVisible(!reviewPanelOpen && !!hasEntries)
   }, [reviewPanelOpen, hasEntries, setMiniReviewPanelVisible])
 
   // listen for events from the CodeMirror 6 track changes extension
   useEffect(() => {
     const toggleTrackChangesFromKbdShortcut = () => {
-      if (trackChangesVisible && trackChanges) {
-        const userId: UserId = user.id
+      const userId = user.id
+      if (trackChangesVisible && trackChanges && userId) {
         const state = trackChangesState[userId]
         if (state) {
           toggleTrackChangesForUser(!state.value, userId)
@@ -1450,6 +1453,27 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
       [getThread]
     )
   )
+  useSocketListener(
+    socket,
+    'new-comment-threads',
+    useCallback(
+      (threads: ReviewPanelCommentThreadsApi) => {
+        setCommentThreads(prevState => {
+          const newThreads = { ...prevState }
+          for (const threadIdString of Object.keys(threads)) {
+            const threadId = threadIdString as ThreadId
+            const { submitting: _, ...thread } = getThread(threadId)
+            // Replace already loaded messages with the server provided ones
+            thread.messages = threads[threadId].messages.map(formatComment)
+            newThreads[threadId] = thread
+          }
+          return newThreads
+        })
+        handleLayoutChange({ async: true })
+      },
+      [getThread]
+    )
+  )
 
   const openSubView = useRef<typeof subView>('cur_file')
   useEffect(() => {
@@ -1467,17 +1491,6 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   }, [reviewPanelOpen])
 
   const canRefreshRanges = useRef(false)
-  useEffect(() => {
-    if (subView === 'overview' && canRefreshRanges.current) {
-      canRefreshRanges.current = false
-
-      setIsOverviewLoading(true)
-      refreshRanges().finally(() => {
-        setIsOverviewLoading(false)
-      })
-    }
-  }, [subView, refreshRanges])
-
   const prevSubView = useRef(subView)
   const initializedPrevSubView = useRef(false)
   useEffect(() => {
@@ -1492,12 +1505,29 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
   }, [subView])
 
   useEffect(() => {
+    if (subView === 'overview' && canRefreshRanges.current) {
+      canRefreshRanges.current = false
+
+      setIsOverviewLoading(true)
+      refreshRanges().finally(() => {
+        setIsOverviewLoading(false)
+      })
+    }
+  }, [subView, refreshRanges])
+
+  useEffect(() => {
     if (subView === 'cur_file' && prevSubView.current === 'overview') {
       dispatchReviewPanelEvent('overview-closed', subView)
     }
   }, [subView])
 
-  const values = useMemo<ReviewPanelStateReactIde['values']>(
+  useEffect(() => {
+    if (Object.keys(users).length) {
+      handleLayoutChange({ async: true })
+    }
+  }, [users])
+
+  const values = useMemo<ReviewPanel.ReviewPanelState['values']>(
     () => ({
       collapsed,
       commentThreads,
@@ -1554,7 +1584,7 @@ function useReviewPanelState(): ReviewPanelStateReactIde {
     ]
   )
 
-  const updaterFns = useMemo<ReviewPanelStateReactIde['updaterFns']>(
+  const updaterFns = useMemo<ReviewPanel.ReviewPanelState['updaterFns']>(
     () => ({
       handleSetSubview,
       handleLayoutChange,

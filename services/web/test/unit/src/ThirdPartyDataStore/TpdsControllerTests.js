@@ -1,4 +1,4 @@
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
 const sinon = require('sinon')
@@ -110,7 +110,7 @@ describe('TpdsController', function () {
           project_id: '',
         },
         headers: {
-          'x-sl-update-source': (this.source = 'dropbox'),
+          'x-update-source': (this.source = 'dropbox'),
         },
       }
     })
@@ -162,7 +162,7 @@ describe('TpdsController', function () {
           destroy() {},
         },
         headers: {
-          'x-sl-update-source': (this.source = 'dropbox'),
+          'x-update-source': (this.source = 'dropbox'),
         },
       }
       const res = {
@@ -232,7 +232,7 @@ describe('TpdsController', function () {
           destroy() {},
         },
         headers: {
-          'x-sl-update-source': (this.source = 'dropbox'),
+          'x-update-source': (this.source = 'dropbox'),
         },
       }
       const res = {
@@ -260,7 +260,7 @@ describe('TpdsController', function () {
           destroy() {},
         },
         headers: {
-          'x-sl-update-source': (this.source = 'dropbox'),
+          'x-update-source': (this.source = 'dropbox'),
         },
       }
       const res = {
@@ -379,7 +379,7 @@ describe('TpdsController', function () {
           destroy: sinon.stub(),
         },
         headers: {
-          'x-sl-update-source': (this.source = 'github'),
+          'x-update-source': (this.source = 'github'),
         },
       }
       this.res = {
@@ -419,7 +419,7 @@ describe('TpdsController', function () {
           destroy: sinon.stub(),
         },
         headers: {
-          'x-sl-update-source': (this.source = 'github'),
+          'x-update-source': (this.source = 'github'),
         },
       }
       this.res = {

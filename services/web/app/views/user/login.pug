@@ -11,6 +11,12 @@ block content
 						form(data-ol-async-form, name="loginForm", action='/login', method="POST")
 							input(name='_csrf', type='hidden', value=csrfToken)
 							+formMessages()
+							+customFormMessage('invalid-password-retry-or-reset', 'danger')
+								| !{translate('email_or_password_wrong_try_again_or_reset', {}, [{ name: 'a', attrs: { href: '/user/password/reset', 'aria-describedby': 'resetPasswordDescription' } }])}
+								span.sr-only(id='resetPasswordDescription')
+									| #{translate('reset_password_link')}
+							+customValidationMessage('password-compromised')
+								| !{translate('password_compromised_try_again_or_use_known_device_or_reset', {}, [{name: 'a', attrs: {href: 'https://haveibeenpwned.com/passwords', rel: 'noopener noreferrer', target: '_blank'}}, {name: 'a', attrs: {href: '/user/password/reset', target: '_blank'}}])}.
 							.form-group
 								input.form-control(
 									type='email',

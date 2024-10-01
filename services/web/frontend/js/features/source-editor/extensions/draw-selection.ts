@@ -3,6 +3,7 @@ import { EditorView, layer } from '@codemirror/view'
 import { rectangleMarkerForRange } from '../utils/layer'
 import { updateHasMouseDownEffect } from './visual/selection'
 import browser from './browser'
+import { updateHasReviewPanelToggledEffect } from './changes/change-manager'
 
 /**
  * The built-in extension which draws the cursor and selection(s) in layers,
@@ -11,24 +12,22 @@ import browser from './browser'
  * of the coords to cover the full line height.
  */
 export const drawSelection = () => {
-  return [cursorLayer, selectionLayer, hideNativeSelection]
+  return [cursorLayer, selectionLayer, Prec.highest(hideNativeSelection)]
 }
 
 const canHidePrimary = !browser.ios
 
-const hideNativeSelection = Prec.highest(
-  EditorView.theme({
-    '.cm-line': {
-      'caret-color': canHidePrimary ? 'transparent !important' : null,
-      '& ::selection': {
-        backgroundColor: 'transparent !important',
-      },
-      '&::selection': {
-        backgroundColor: 'transparent !important',
-      },
+const hideNativeSelection = EditorView.theme({
+  '.cm-line': {
+    'caret-color': canHidePrimary ? 'transparent !important' : null,
+    '& ::selection': {
+      backgroundColor: 'transparent !important',
     },
-  })
-)
+    '&::selection': {
+      backgroundColor: 'transparent !important',
+    },
+  },
+})
 
 const cursorLayer = layer({
   above: true,
@@ -97,7 +96,8 @@ const selectionLayer = layer({
       update.docChanged ||
       update.selectionSet ||
       update.viewportChanged ||
-      updateHasMouseDownEffect(update)
+      updateHasMouseDownEffect(update) ||
+      updateHasReviewPanelToggledEffect(update)
     )
   },
   class: 'cm-selectionLayer',

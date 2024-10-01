@@ -22,6 +22,9 @@ chai.config.truncateThreshold = 0
 // add support for mongoose in sinon
 require('sinon-mongoose')
 
+// ensure every ObjectId has the id string as a property for correct comparisons
+require('mongodb-legacy').ObjectId.cacheHexString = true
+
 /*
  * Global stubs
  */
@@ -47,6 +50,7 @@ SandboxedModule.configure({
   ignoreMissing: true,
   requires: getSandboxedModuleRequires(),
   globals: {
+    AbortController,
     AbortSignal,
     Buffer,
     Promise,
@@ -78,6 +82,7 @@ function getSandboxedModuleRequires() {
     'sanitize-html',
     'sshpk',
     'xml2js',
+    'mongodb',
   ]
   for (const modulePath of internalModules) {
     requires[Path.resolve(__dirname, modulePath)] = require(modulePath)

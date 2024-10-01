@@ -1,14 +1,14 @@
-let RedisManager
 const Settings = require('@overleaf/settings')
 const rclient = require('@overleaf/redis-wrapper').createClient(
   Settings.redis.documentupdater
 )
 const logger = require('@overleaf/logger')
+const OError = require('@overleaf/o-error')
+const { promisifyAll } = require('@overleaf/promise-utils')
 const metrics = require('./Metrics')
 const Errors = require('./Errors')
 const crypto = require('crypto')
 const async = require('async')
-const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
 const { docIsTooLarge } = require('./Limits')
 
 // Sometimes Redis calls take an unexpectedly long time.  We have to be
@@ -16,6 +16,7 @@ const { docIsTooLarge } = require('./Limits')
 // after 30 seconds. We can't let any errors in the rest of the stack
 // hold us up, and need to bail out quickly if there is a problem.
 const MAX_REDIS_REQUEST_LENGTH = 5000 // 5 seconds
+const PROJECT_BLOCK_TTL_SECS = 30
 
 // Make times easy to read
 const minutes = 60 // seconds for Redis expire
@@ -27,7 +28,7 @@ const MAX_RANGES_SIZE = 3 * MEGABYTES
 
 const keys = Settings.redis.documentupdater.key_schema
 
-module.exports = RedisManager = {
+const RedisManager = {
   rclient,
 
   putDocInMemory(
@@ -36,8 +37,10 @@ module.exports = RedisManager = {
     docLines,
     version,
     ranges,
+    resolvedCommentIds,
     pathname,
     projectHistoryId,
+    historyRangesSupport,
     _callback
   ) {
     const timer = new metrics.Timer('redis.put-doc')
@@ -75,22 +78,49 @@ module.exports = RedisManager = {
         logger.error({ err: error, docId, projectId }, error.message)
         return callback(error)
       }
+
       // update docsInProject set before writing doc contents
-      rclient.sadd(
-        keys.docsInProject({ project_id: projectId }),
-        docId,
-        error => {
-          if (error) return callback(error)
+      const multi = rclient.multi()
+      multi.exists(keys.projectBlock({ project_id: projectId }))
+      multi.sadd(keys.docsInProject({ project_id: projectId }), docId)
+      multi.exec((err, reply) => {
+        if (err) {
+          return callback(err)
+        }
+        const projectBlocked = reply[0] === 1
+        if (projectBlocked) {
+          // We don't clean up the spurious docId added in the docsInProject
+          // set. There is a risk that the docId was successfully added by a
+          // concurrent process.  This set is used when unloading projects. An
+          // extra docId will not prevent the project from being uploaded, but
+          // a missing docId means that the doc might stay in Redis forever.
+          return callback(
+            new OError('Project blocked from loading docs', { projectId })
+          )
+        }
 
-          if (!pathname) {
-            metrics.inc('pathname', 1, {
-              path: 'RedisManager.setDoc',
-              status: pathname === '' ? 'zero-length' : 'undefined',
-            })
-          }
+        RedisManager.setHistoryRangesSupportFlag(
+          docId,
+          historyRangesSupport,
+          err => {
+            if (err) {
+              return callback(err)
+            }
 
-          rclient.mset(
-            {
+            if (!pathname) {
+              metrics.inc('pathname', 1, {
+                path: 'RedisManager.setDoc',
+                status: pathname === '' ? 'zero-length' : 'undefined',
+              })
+            }
+
+            // Make sure that this MULTI operation only operates on doc
+            // specific keys, i.e. keys that have the doc id in curly braces.
+            // The curly braces identify a hash key for Redis and ensures that
+            // the MULTI's operations are all done on the same node in a
+            // cluster environment.
+            const multi = rclient.multi()
+            multi.mset({
               [keys.docLines({ doc_id: docId })]: docLines,
               [keys.projectKey({ doc_id: docId })]: projectId,
               [keys.docVersion({ doc_id: docId })]: version,
@@ -98,11 +128,34 @@ module.exports = RedisManager = {
               [keys.ranges({ doc_id: docId })]: ranges,
               [keys.pathname({ doc_id: docId })]: pathname,
               [keys.projectHistoryId({ doc_id: docId })]: projectHistoryId,
-            },
-            callback
-          )
-        }
-      )
+            })
+            if (historyRangesSupport) {
+              multi.del(keys.resolvedCommentIds({ doc_id: docId }))
+              if (resolvedCommentIds.length > 0) {
+                multi.sadd(
+                  keys.resolvedCommentIds({ doc_id: docId }),
+                  ...resolvedCommentIds
+                )
+              }
+            }
+            multi.exec(err => {
+              if (err) {
+                callback(
+                  OError.tag(err, 'failed to write doc to Redis in MULTI', {
+                    previousErrors: err.previousErrors.map(e => ({
+                      name: e.name,
+                      message: e.message,
+                      command: e.command,
+                    })),
+                  })
+                )
+              } else {
+                callback()
+              }
+            })
+          }
+        )
+      })
     })
   },
 
@@ -118,6 +171,11 @@ module.exports = RedisManager = {
       }
     }
 
+    // Make sure that this MULTI operation only operates on doc
+    // specific keys, i.e. keys that have the doc id in curly braces.
+    // The curly braces identify a hash key for Redis and ensures that
+    // the MULTI's operations are all done on the same node in a
+    // cluster environment.
     let multi = rclient.multi()
     multi.strlen(keys.docLines({ doc_id: docId }))
     multi.del(
@@ -130,7 +188,8 @@ module.exports = RedisManager = {
       keys.projectHistoryId({ doc_id: docId }),
       keys.unflushedTime({ doc_id: docId }),
       keys.lastUpdatedAt({ doc_id: docId }),
-      keys.lastUpdatedBy({ doc_id: docId })
+      keys.lastUpdatedBy({ doc_id: docId }),
+      keys.resolvedCommentIds({ doc_id: docId })
     )
     multi.exec((error, response) => {
       if (error) {
@@ -141,14 +200,30 @@ module.exports = RedisManager = {
         // record bytes freed in redis
         metrics.summary('redis.docLines', length, { status: 'del' })
       }
+
+      // Make sure that this MULTI operation only operates on project
+      // specific keys, i.e. keys that have the project id in curly braces.
+      // The curly braces identify a hash key for Redis and ensures that
+      // the MULTI's operations are all done on the same node in a
+      // cluster environment.
       multi = rclient.multi()
       multi.srem(keys.docsInProject({ project_id: projectId }), docId)
       multi.del(keys.projectState({ project_id: projectId }))
-      multi.exec(callback)
+      multi.exec(err => {
+        if (err) {
+          return callback(err)
+        }
+        rclient.srem(keys.historyRangesSupport(), docId, callback)
+      })
     })
   },
 
   checkOrSetProjectState(projectId, newState, callback) {
+    // Make sure that this MULTI operation only operates on project
+    // specific keys, i.e. keys that have the project id in curly braces.
+    // The curly braces identify a hash key for Redis and ensures that
+    // the MULTI's operations are all done on the same node in a
+    // cluster environment.
     const multi = rclient.multi()
     multi.getset(keys.projectState({ project_id: projectId }), newState)
     multi.expire(keys.projectState({ project_id: projectId }), 30 * minutes)
@@ -198,68 +273,91 @@ module.exports = RedisManager = {
         lastUpdatedAt,
         lastUpdatedBy,
       ] = result
-      const timeSpan = timer.done()
-      // check if request took too long and bail out.  only do this for
-      // get, because it is the first call in each update, so if this
-      // passes we'll assume others have a reasonable chance to succeed.
-      if (timeSpan > MAX_REDIS_REQUEST_LENGTH) {
-        error = new Error('redis getDoc exceeded timeout')
-        return callback(error)
-      }
-      // record bytes loaded from redis
-      if (docLines != null) {
-        metrics.summary('redis.docLines', docLines.length, { status: 'get' })
-      }
-      // check sha1 hash value if present
-      if (docLines != null && storedHash != null) {
-        const computedHash = RedisManager._computeHash(docLines)
-        if (logHashReadErrors && computedHash !== storedHash) {
-          logger.error(
-            {
-              projectId,
-              docId,
-              docProjectId,
-              computedHash,
-              storedHash,
-              docLines,
-            },
-            'hash mismatch on retrieved document'
-          )
+      rclient.sismember(keys.historyRangesSupport(), docId, (error, result) => {
+        if (error) {
+          return callback(error)
         }
-      }
+        rclient.smembers(
+          keys.resolvedCommentIds({ doc_id: docId }),
+          (error, resolvedCommentIds) => {
+            if (error) {
+              return callback(error)
+            }
 
-      try {
-        docLines = JSON.parse(docLines)
-        ranges = RedisManager._deserializeRanges(ranges)
-      } catch (e) {
-        return callback(e)
-      }
+            const historyRangesSupport = result === 1
 
-      version = parseInt(version || 0, 10)
-      // check doc is in requested project
-      if (docProjectId != null && docProjectId !== projectId) {
-        logger.error({ projectId, docId, docProjectId }, 'doc not in project')
-        return callback(new Errors.NotFoundError('document not found'))
-      }
+            const timeSpan = timer.done()
+            // check if request took too long and bail out.  only do this for
+            // get, because it is the first call in each update, so if this
+            // passes we'll assume others have a reasonable chance to succeed.
+            if (timeSpan > MAX_REDIS_REQUEST_LENGTH) {
+              error = new Error('redis getDoc exceeded timeout')
+              return callback(error)
+            }
+            // record bytes loaded from redis
+            if (docLines != null) {
+              metrics.summary('redis.docLines', docLines.length, {
+                status: 'get',
+              })
+            }
+            // check sha1 hash value if present
+            if (docLines != null && storedHash != null) {
+              const computedHash = RedisManager._computeHash(docLines)
+              if (logHashReadErrors && computedHash !== storedHash) {
+                logger.error(
+                  {
+                    projectId,
+                    docId,
+                    docProjectId,
+                    computedHash,
+                    storedHash,
+                    docLines,
+                  },
+                  'hash mismatch on retrieved document'
+                )
+              }
+            }
 
-      if (docLines && version && !pathname) {
-        metrics.inc('pathname', 1, {
-          path: 'RedisManager.getDoc',
-          status: pathname === '' ? 'zero-length' : 'undefined',
-        })
-      }
+            try {
+              docLines = JSON.parse(docLines)
+              ranges = RedisManager._deserializeRanges(ranges)
+            } catch (e) {
+              return callback(e)
+            }
 
-      callback(
-        null,
-        docLines,
-        version,
-        ranges,
-        pathname,
-        projectHistoryId,
-        unflushedTime,
-        lastUpdatedAt,
-        lastUpdatedBy
-      )
+            version = parseInt(version || 0, 10)
+            // check doc is in requested project
+            if (docProjectId != null && docProjectId !== projectId) {
+              logger.error(
+                { projectId, docId, docProjectId },
+                'doc not in project'
+              )
+              return callback(new Errors.NotFoundError('document not found'))
+            }
+
+            if (docLines && version && !pathname) {
+              metrics.inc('pathname', 1, {
+                path: 'RedisManager.getDoc',
+                status: pathname === '' ? 'zero-length' : 'undefined',
+              })
+            }
+
+            callback(
+              null,
+              docLines,
+              version,
+              ranges,
+              pathname,
+              projectHistoryId,
+              unflushedTime,
+              lastUpdatedAt,
+              lastUpdatedBy,
+              historyRangesSupport,
+              resolvedCommentIds
+            )
+          }
+        )
+      })
     })
   },
 
@@ -298,7 +396,8 @@ module.exports = RedisManager = {
 
         if (start < firstVersionInRedis || end > version) {
           error = new Errors.OpRangeNotAvailableError(
-            'doc ops range is not loaded in redis'
+            'doc ops range is not loaded in redis',
+            { firstVersionInRedis, version, ttlInS: RedisManager.DOC_OPS_TTL }
           )
           logger.debug(
             { err: error, docId, length, version, start, end },
@@ -434,6 +533,12 @@ module.exports = RedisManager = {
           logger.error({ err: error, docId, ranges }, error.message)
           return callback(error)
         }
+
+        // Make sure that this MULTI operation only operates on doc
+        // specific keys, i.e. keys that have the doc id in curly braces.
+        // The curly braces identify a hash key for Redis and ensures that
+        // the MULTI's operations are all done on the same node in a
+        // cluster environment.
         const multi = rclient.multi()
         multi.mset({
           [keys.docLines({ doc_id: docId })]: newDocLines,
@@ -461,25 +566,7 @@ module.exports = RedisManager = {
           if (error) {
             return callback(error)
           }
-
-          if (jsonOps.length > 0) {
-            metrics.inc('history-queue', 1, { status: 'project-history' })
-            ProjectHistoryRedisManager.queueOps(
-              projectId,
-              ...jsonOps,
-              (error, projectUpdateCount) => {
-                if (error) {
-                  // The full project history can re-sync a project in case
-                  //  updates went missing.
-                  // Just record the error here and acknowledge the write-op.
-                  metrics.inc('history-queue-error')
-                }
-                callback(null, projectUpdateCount)
-              }
-            )
-          } else {
-            callback(null)
-          }
+          callback()
         })
       })
     })
@@ -514,6 +601,22 @@ module.exports = RedisManager = {
 
   clearUnflushedTime(docId, callback) {
     rclient.del(keys.unflushedTime({ doc_id: docId }), callback)
+  },
+
+  updateCommentState(docId, commentId, resolved, callback) {
+    if (resolved) {
+      rclient.sadd(
+        keys.resolvedCommentIds({ doc_id: docId }),
+        commentId,
+        callback
+      )
+    } else {
+      rclient.srem(
+        keys.resolvedCommentIds({ doc_id: docId }),
+        commentId,
+        callback
+      )
+    }
   },
 
   getDocIdsInProject(projectId, callback) {
@@ -589,6 +692,56 @@ module.exports = RedisManager = {
     )
   },
 
+  setHistoryRangesSupportFlag(docId, historyRangesSupport, callback) {
+    if (historyRangesSupport) {
+      rclient.sadd(keys.historyRangesSupport(), docId, callback)
+    } else {
+      rclient.srem(keys.historyRangesSupport(), docId, callback)
+    }
+  },
+
+  blockProject(projectId, callback) {
+    // Make sure that this MULTI operation only operates on project
+    // specific keys, i.e. keys that have the project id in curly braces.
+    // The curly braces identify a hash key for Redis and ensures that
+    // the MULTI's operations are all done on the same node in a
+    // cluster environment.
+    const multi = rclient.multi()
+    multi.setex(
+      keys.projectBlock({ project_id: projectId }),
+      PROJECT_BLOCK_TTL_SECS,
+      '1'
+    )
+    multi.scard(keys.docsInProject({ project_id: projectId }))
+    multi.exec((err, reply) => {
+      if (err) {
+        return callback(err)
+      }
+      const docsInProject = reply[1]
+      if (docsInProject > 0) {
+        // Too late to lock the project
+        rclient.del(keys.projectBlock({ project_id: projectId }), err => {
+          if (err) {
+            return callback(err)
+          }
+          callback(null, false)
+        })
+      } else {
+        callback(null, true)
+      }
+    })
+  },
+
+  unblockProject(projectId, callback) {
+    rclient.del(keys.projectBlock({ project_id: projectId }), (err, reply) => {
+      if (err) {
+        return callback(err)
+      }
+      const wasBlocked = reply === 1
+      callback(null, wasBlocked)
+    })
+  },
+
   _serializeRanges(ranges, callback) {
     let jsonRanges = JSON.stringify(ranges)
     if (jsonRanges && jsonRanges.length > MAX_RANGES_SIZE) {
@@ -617,3 +770,27 @@ module.exports = RedisManager = {
     return crypto.createHash('sha1').update(docLines, 'utf8').digest('hex')
   },
 }
+
+module.exports = RedisManager
+module.exports.promises = promisifyAll(RedisManager, {
+  without: ['_deserializeRanges', '_computeHash'],
+  multiResult: {
+    getDoc: [
+      'lines',
+      'version',
+      'ranges',
+      'pathname',
+      'projectHistoryId',
+      'unflushedTime',
+      'lastUpdatedAt',
+      'lastUpdatedBy',
+      'historyRangesSupport',
+      'resolvedCommentIds',
+    ],
+    getNextProjectToFlushAndDelete: [
+      'projectId',
+      'flushTimestamp',
+      'queueLength',
+    ],
+  },
+})

@@ -1,17 +1,20 @@
 const { ForbiddenError, UserNotFoundError } = require('../Errors/Errors')
 const {
-  hasPermission,
   getUserCapabilities,
   getUserRestrictions,
+  combineGroupPolicies,
+  combineAllowedProperties,
 } = require('./PermissionsManager')
+const { assertUserPermissions } = require('./PermissionsManager').promises
 const Modules = require('../../infrastructure/Modules')
+const { expressify } = require('@overleaf/promise-utils')
 
 /**
  * Function that returns middleware to add an `assertPermission` function to the request object to check if the user has a specific capability.
  * @returns {Function} The middleware function that adds the `assertPermission` function to the request object.
  */
 function useCapabilities() {
-  return async function (req, res, next) {
+  const middleware = async function (req, res, next) {
     // attach the user's capabilities to the request object
     req.capabilitySet = new Set()
     // provide a function to assert that a capability is present
@@ -26,25 +29,29 @@ function useCapabilities() {
       return next()
     }
     try {
-      const result = (
-        await Modules.promises.hooks.fire(
-          'getManagedUsersEnrollmentForUser',
-          req.user
-        )
-      )[0]
-      if (result) {
-        // get the group policy applying to the user
-        const { groupPolicy, managedBy, isManagedGroupAdmin } = result
-        // attach the subscription ID to the request object
-        req.managedBy = managedBy
-        // attach the subscription admin status to the request object
-        req.isManagedGroupAdmin = isManagedGroupAdmin
+      let results = await Modules.promises.hooks.fire(
+        'getGroupPolicyForUser',
+        req.user
+      )
+      // merge array of all results from all modules
+      results = results.flat()
+
+      if (results.length > 0) {
+        // get the combined group policy applying to the user
+        const groupPolicies = results.map(result => result.groupPolicy)
+        const combinedGroupPolicy = combineGroupPolicies(groupPolicies)
         // attach the new capabilities to the request object
-        for (const cap of getUserCapabilities(groupPolicy)) {
+        for (const cap of getUserCapabilities(combinedGroupPolicy)) {
           req.capabilitySet.add(cap)
         }
         // also attach the user's restrictions (the capabilities they don't have)
-        req.userRestrictions = getUserRestrictions(groupPolicy)
+        req.userRestrictions = getUserRestrictions(combinedGroupPolicy)
+
+        // attach allowed properties to the request object
+        const allowedProperties = combineAllowedProperties(results)
+        for (const [prop, value] of Object.entries(allowedProperties)) {
+          req[prop] = value
+        }
       }
       next()
     } catch (error) {
@@ -57,6 +64,7 @@ function useCapabilities() {
       }
     }
   }
+  return expressify(middleware)
 }
 
 /**
@@ -76,26 +84,7 @@ function requirePermission(...requiredCapabilities) {
       return next(new Error('no user'))
     }
     try {
-      const result =
-        (
-          await Modules.promises.hooks.fire(
-            'getManagedUsersEnrollmentForUser',
-            req.user
-          )
-        )[0] || {}
-      const { groupPolicy, managedUsersEnabled } = result
-      if (!managedUsersEnabled) {
-        return next()
-      }
-      // check that the user has all the required capabilities
-      for (const requiredCapability of requiredCapabilities) {
-        // if the user has the permission, continue
-        if (!hasPermission(groupPolicy, requiredCapability)) {
-          throw new ForbiddenError(
-            `user does not have permission for ${requiredCapability}`
-          )
-        }
-      }
+      await assertUserPermissions(req.user, requiredCapabilities)
       next()
     } catch (error) {
       next(error)

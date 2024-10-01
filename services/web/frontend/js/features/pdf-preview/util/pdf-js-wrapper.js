@@ -96,6 +96,7 @@ export default class PDFJSWrapper {
         rangeChunkSize,
         disableAutoFetch: true,
         disableStream,
+        isEvalSupported: false,
         textLayerMode: 2, // PDFJSViewer.TextLayerMode.ENABLE,
         range: rangeTransport,
       })
@@ -151,6 +152,7 @@ export default class PDFJSWrapper {
       if (
         currentScaleValue === 'auto' ||
         currentScaleValue === 'page-fit' ||
+        currentScaleValue === 'page-height' ||
         currentScaleValue === 'page-width'
       ) {
         this.viewer.currentScaleValue = currentScaleValue
@@ -161,16 +163,14 @@ export default class PDFJSWrapper {
   }
 
   // get the page and offset of a click event
-  clickPosition(event, pageElement, textLayer) {
-    const { viewport } = this.viewer.getPageView(textLayer.pageNumber - 1)
-
-    const pageCanvas = pageElement.querySelector('canvas')
-
-    if (!pageCanvas) {
+  clickPosition(event, canvas, page) {
+    if (!canvas) {
       return
     }
 
-    const pageRect = pageCanvas.getBoundingClientRect()
+    const { viewport } = this.viewer.getPageView(page)
+
+    const pageRect = canvas.getBoundingClientRect()
 
     const dx = event.clientX - pageRect.left
     const dy = event.clientY - pageRect.top
@@ -178,7 +178,7 @@ export default class PDFJSWrapper {
     const [left, top] = viewport.convertToPdfPoint(dx, dy)
 
     return {
-      page: textLayer.pageNumber - 1,
+      page,
       offset: {
         left,
         top: viewport.viewBox[3] - top,

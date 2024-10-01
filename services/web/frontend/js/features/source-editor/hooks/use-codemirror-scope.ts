@@ -21,8 +21,11 @@ import {
 } from '../extensions/annotations'
 import { useDetachCompileContext as useCompileContext } from '../../../shared/context/detach-compile-context'
 import { setCursorHighlights } from '../extensions/cursor-highlights'
-import { setMetadata, setSyntaxValidation } from '../extensions/language'
-import { useIdeContext } from '../../../shared/context/ide-context'
+import {
+  setLanguage,
+  setMetadata,
+  setSyntaxValidation,
+} from '../extensions/language'
 import { restoreScrollPosition } from '../extensions/scroll-position'
 import { setEditable } from '../extensions/editable'
 import { useFileTreeData } from '../../../shared/context/file-tree-data-context'
@@ -39,19 +42,31 @@ import {
 import {
   createChangeManager,
   dispatchEditorEvent,
+  reviewPanelToggled,
 } from '../extensions/changes/change-manager'
 import { setKeybindings } from '../extensions/keybindings'
 import { Highlight } from '../../../../../types/highlight'
 import { EditorView } from '@codemirror/view'
-import { CurrentDoc } from '../../../../../types/current-doc'
 import { useErrorHandler } from 'react-error-boundary'
 import { setVisual } from '../extensions/visual/visual'
 import { useFileTreePathContext } from '@/features/file-tree/contexts/file-tree-path'
 import { useUserSettingsContext } from '@/shared/context/user-settings-context'
+import { setDocName } from '@/features/source-editor/extensions/doc-name'
+import isValidTexFile from '@/main/is-valid-tex-file'
+import { captureException } from '@/infrastructure/error-reporter'
+import grammarlyExtensionPresent from '@/shared/utils/grammarly'
+import { DocumentContainer } from '@/features/ide-react/editor/document-container'
+import { useLayoutContext } from '@/shared/context/layout-context'
+import { debugConsole } from '@/utils/debugging'
+import { useMetadataContext } from '@/features/ide-react/context/metadata-context'
+import { useUserContext } from '@/shared/context/user-context'
+import { useReferencesContext } from '@/features/ide-react/context/references-context'
+import { setMathPreview } from '@/features/source-editor/extensions/math-preview'
+import { useRangesContext } from '@/features/review-panel-new/context/ranges-context'
+import { updateRanges } from '@/features/source-editor/extensions/ranges'
+import { useThreadsContext } from '@/features/review-panel-new/context/threads-context'
 
 function useCodeMirrorScope(view: EditorView) {
-  const ide = useIdeContext()
-
   const { fileTreeData } = useFileTreeData()
 
   const [permissions] = useScopeValue<{ write: boolean }>('permissions')
@@ -61,12 +76,19 @@ function useCodeMirrorScope(view: EditorView) {
   const { logEntryAnnotations, editedSinceCompileStarted, compiling } =
     useCompileContext()
 
+  const { reviewPanelOpen, miniReviewPanelVisible } = useLayoutContext()
+
+  const metadata = useMetadataContext()
+
   const [loadingThreads] = useScopeValue<boolean>('loadingThreads')
 
-  const [currentDoc] = useScopeValue<CurrentDoc | null>('editor.sharejs_doc')
+  const [currentDoc] = useScopeValue<DocumentContainer | null>(
+    'editor.sharejs_doc'
+  )
   const [docName] = useScopeValue<string>('editor.open_doc_name')
   const [trackChanges] = useScopeValue<boolean>('editor.trackChanges')
 
+  const { id: userId } = useUserContext()
   const { userSettings } = useUserSettingsContext()
   const {
     fontFamily,
@@ -78,6 +100,7 @@ function useCodeMirrorScope(view: EditorView) {
     autoPairDelimiters,
     mode,
     syntaxValidation,
+    mathPreview,
   } = userSettings
 
   const [cursorHighlights] = useScopeValue<Record<string, Highlight[]>>(
@@ -90,7 +113,10 @@ function useCodeMirrorScope(view: EditorView) {
 
   const [visual] = useScopeValue<boolean>('editor.showVisual')
 
-  const [references] = useScopeValue<{ keys: string[] }>('$root._references')
+  const { referenceKeys } = useReferencesContext()
+
+  const ranges = useRangesContext()
+  const threads = useThreadsContext()
 
   // build the translation phrases
   const phrases = usePhrases()
@@ -135,13 +161,15 @@ function useCodeMirrorScope(view: EditorView) {
     autoPairDelimiters,
     mode,
     syntaxValidation,
+    mathPreview,
   })
 
   const currentDocRef = useRef({
     currentDoc,
-    docName,
     trackChanges,
     loadingThreads,
+    threads,
+    ranges,
   })
 
   useEffect(() => {
@@ -151,10 +179,16 @@ function useCodeMirrorScope(view: EditorView) {
   }, [view, currentDoc])
 
   useEffect(() => {
-    if (docName) {
-      currentDocRef.current.docName = docName
+    currentDocRef.current.ranges = ranges
+    currentDocRef.current.threads = threads
+    if (ranges && threads) {
+      window.setTimeout(() => {
+        view.dispatch(updateRanges({ ranges, threads }))
+      })
     }
-  }, [view, docName])
+  }, [view, ranges, threads])
+
+  const docNameRef = useRef(docName)
 
   useEffect(() => {
     currentDocRef.current.loadingThreads = loadingThreads
@@ -165,12 +199,12 @@ function useCodeMirrorScope(view: EditorView) {
 
     if (currentDoc) {
       if (trackChanges) {
-        currentDoc.track_changes_as = window.user.id || 'anonymous'
+        currentDoc.track_changes_as = userId || 'anonymous'
       } else {
         currentDoc.track_changes_as = null
       }
     }
-  }, [currentDoc, trackChanges])
+  }, [userId, currentDoc, trackChanges])
 
   useEffect(() => {
     if (lineHeight && fontSize) {
@@ -189,10 +223,16 @@ function useCodeMirrorScope(view: EditorView) {
     view.dispatch(setSpelling(spellingRef.current))
   }, [view, spellCheckLanguage])
 
-  // listen to doc:after-opened, and focus the editor
+  // listen to doc:after-opened, and focus the editor if it's not a new doc
   useEffect(() => {
-    const listener = () => {
-      scheduleFocus(view)
+    const listener: EventListener = event => {
+      const { isNewDoc } = (event as CustomEvent<{ isNewDoc: boolean }>).detail
+
+      if (!isNewDoc) {
+        window.setTimeout(() => {
+          view.focus()
+        }, 0)
+      }
     }
     window.addEventListener('doc:after-opened', listener)
     return () => window.removeEventListener('doc:after-opened', listener)
@@ -201,38 +241,34 @@ function useCodeMirrorScope(view: EditorView) {
   // set the project metadata, mostly for use in autocomplete
   // TODO: read this data from the scope?
   const metadataRef = useRef({
-    documents: ide.metadataManager.metadata.state.documents,
-    references: references.keys,
+    ...metadata,
+    referenceKeys,
     fileTreeData,
   })
 
-  // listen to project metadata (docs + packages) updates
+  // listen to project metadata (commands, labels and package names) updates
   useEffect(() => {
-    const listener = (event: Event) => {
-      metadataRef.current.documents = (
-        event as CustomEvent<Record<string, any>>
-      ).detail
+    metadataRef.current = { ...metadataRef.current, ...metadata }
+    window.setTimeout(() => {
       view.dispatch(setMetadata(metadataRef.current))
-    }
-    window.addEventListener('project:metadata', listener)
-    return () => window.removeEventListener('project:metadata', listener)
-  }, [view])
+    })
+  }, [view, metadata])
 
   // listen to project reference keys updates
   useEffect(() => {
-    const listener = (event: Event) => {
-      metadataRef.current.references = (event as CustomEvent<string[]>).detail
+    metadataRef.current.referenceKeys = referenceKeys
+    window.setTimeout(() => {
       view.dispatch(setMetadata(metadataRef.current))
-    }
-    window.addEventListener('project:references', listener)
-    return () => window.removeEventListener('project:references', listener)
-  }, [view])
+    })
+  }, [view, referenceKeys])
 
   // listen to project root folder updates
   useEffect(() => {
     if (fileTreeData) {
       metadataRef.current.fileTreeData = fileTreeData
-      view.dispatch(setMetadata(metadataRef.current))
+      window.setTimeout(() => {
+        view.dispatch(setMetadata(metadataRef.current))
+      })
     }
   }, [view, fileTreeData])
 
@@ -240,17 +276,37 @@ function useCodeMirrorScope(view: EditorView) {
 
   const { previewByPath } = useFileTreePathContext()
 
+  const showVisual = visual && isValidTexFile(docName)
+
   const visualRef = useRef({
     previewByPath,
-    visual,
+    visual: showVisual,
   })
 
   const handleError = useErrorHandler()
+
+  const handleException = useCallback((exception: any) => {
+    captureException(exception, {
+      tags: {
+        handler: 'cm6-exception',
+        // which editor mode is active ('visual' | 'code')
+        ol_editor_mode: visualRef.current.visual ? 'visual' : 'code',
+        // which editor keybindings are active ('default' | 'vim' | 'emacs')
+        ol_editor_keybindings: settingsRef.current.mode,
+        // whether Writefull is present ('extension' | 'integration' | 'none')
+        ol_extensions_writefull: window.writefull?.type ?? 'none',
+        // whether Grammarly is present
+        ol_extensions_grammarly: grammarlyExtensionPresent(),
+      },
+    })
+  }, [])
 
   // create a new state when currentDoc changes
 
   useEffect(() => {
     if (currentDoc) {
+      debugConsole.log('creating new editor state')
+
       const state = EditorState.create({
         doc: currentDoc.getSnapshot(),
         extensions: createExtensions({
@@ -258,6 +314,7 @@ function useCodeMirrorScope(view: EditorView) {
             ...currentDocRef.current,
             currentDoc,
           },
+          docName: docNameRef.current,
           theme: themeRef.current,
           metadata: metadataRef.current,
           settings: settingsRef.current,
@@ -266,6 +323,7 @@ function useCodeMirrorScope(view: EditorView) {
           visual: visualRef.current,
           changeManager: createChangeManager(view, currentDoc),
           handleError,
+          handleException,
         }),
       })
       view.setState(state)
@@ -295,17 +353,32 @@ function useCodeMirrorScope(view: EditorView) {
     }
     // IMPORTANT: This effect must not depend on anything variable apart from currentDoc,
     // as the editor state is recreated when the effect runs.
-  }, [view, currentDoc, handleError])
+  }, [view, currentDoc, handleError, handleException])
 
   useEffect(() => {
-    visualRef.current.visual = visual
+    if (docName) {
+      docNameRef.current = docName
+
+      view.dispatch(
+        setDocName(docNameRef.current),
+        setLanguage(
+          docNameRef.current,
+          metadataRef.current,
+          settingsRef.current.syntaxValidation
+        )
+      )
+    }
+  }, [view, docName])
+
+  useEffect(() => {
+    visualRef.current.visual = showVisual
     view.dispatch(setVisual(visualRef.current))
     view.dispatch({
       effects: EditorView.scrollIntoView(view.state.selection.main.head),
     })
     // clear performance measures and marks when switching between Source and Rich Text
     window.dispatchEvent(new Event('editor:visual-switch'))
-  }, [view, visual])
+  }, [view, showVisual])
 
   useEffect(() => {
     visualRef.current.previewByPath = previewByPath
@@ -344,6 +417,11 @@ function useCodeMirrorScope(view: EditorView) {
     settingsRef.current.syntaxValidation = syntaxValidation
     view.dispatch(setSyntaxValidation(syntaxValidation))
   }, [view, syntaxValidation])
+
+  useEffect(() => {
+    settingsRef.current.mathPreview = mathPreview
+    view.dispatch(setMathPreview(mathPreview))
+  }, [view, mathPreview])
 
   const emitSyncToPdf = useScopeEventEmitter('cursor:editor:syncToPdf')
 
@@ -425,7 +503,7 @@ function useCodeMirrorScope(view: EditorView) {
       // dispatch in a timeout, so the dispatch isn't in the same cycle as the edit which caused it
       window.setTimeout(() => {
         view.dispatch(
-          setAnnotations(view.state.doc, annotations || []),
+          setAnnotations(view.state, annotations || []),
           // reconfigure the compile log lint source, so it runs once with the new data
           showCompileLogDiagnostics(enableCompileLogLinterRef.current)
         )
@@ -475,12 +553,10 @@ function useCodeMirrorScope(view: EditorView) {
   }, [view])
 
   useEventListener('learnedWords:reset', handleResetLearnedWords)
+
+  useEffect(() => {
+    view.dispatch(reviewPanelToggled())
+  }, [reviewPanelOpen, miniReviewPanelVisible, view])
 }
 
 export default useCodeMirrorScope
-
-const scheduleFocus = (view: EditorView) => {
-  window.setTimeout(() => {
-    view.focus()
-  }, 0)
-}

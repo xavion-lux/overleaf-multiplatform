@@ -1,3 +1,4 @@
+// ts-check
 const Settings = require('@overleaf/settings')
 const RecurlyWrapper = require('./RecurlyWrapper')
 const PlansLocator = require('./PlansLocator')
@@ -19,7 +20,9 @@ const {
 } = require('../Errors/Errors')
 const FeaturesHelper = require('./FeaturesHelper')
 
-/** @typedef {import("../../../../types/project/dashboard/subscription").Subscription} Subscription */
+/**
+ * @import { Subscription } from "../../../../types/project/dashboard/subscription"
+ */
 
 function buildHostedLink(type) {
   return `/user/subscription/recurly/${type}`
@@ -65,7 +68,11 @@ async function getRedirectToHostedPage(userId, pageType) {
   ].join('')
 }
 
-async function buildUsersSubscriptionViewModel(user) {
+async function buildUsersSubscriptionViewModel(
+  user,
+  locale = 'en',
+  formatPrice = SubscriptionFormatters.formatPriceDefault
+) {
   let {
     personalSubscription,
     memberGroupSubscriptions,
@@ -153,10 +160,59 @@ async function buildUsersSubscriptionViewModel(user) {
 
   if (memberGroupSubscriptions == null) {
     memberGroupSubscriptions = []
+  } else {
+    memberGroupSubscriptions = memberGroupSubscriptions.map(group => {
+      const userIsGroupManager = group.manager_ids?.some(
+        id => id.toString() === user._id.toString()
+      )
+
+      const groupDataForView = {
+        _id: group._id,
+        planCode: group.planCode,
+        teamName: group.teamName,
+        admin_id: {
+          email: group.admin_id.email,
+        },
+        userIsGroupManager,
+      }
+
+      if (group.teamNotice) {
+        groupDataForView.teamNotice = sanitizeHtml(group.teamNotice)
+      }
+
+      buildGroupSubscriptionForView(groupDataForView)
+
+      return groupDataForView
+    })
   }
+
   if (managedGroupSubscriptions == null) {
     managedGroupSubscriptions = []
+  } else {
+    managedGroupSubscriptions = managedGroupSubscriptions.map(group => {
+      const userIsGroupMember = group.member_ids?.some(
+        id => id.toString() === user._id.toString()
+      )
+
+      const groupDataForView = {
+        _id: group._id,
+        planCode: group.planCode,
+        groupPlan: group.groupPlan,
+        teamName: group.teamName,
+        admin_id: {
+          _id: group.admin_id._id,
+          email: group.admin_id.email,
+        },
+        features: group.features,
+        userIsGroupMember,
+      }
+
+      buildGroupSubscriptionForView(groupDataForView)
+
+      return groupDataForView
+    })
   }
+
   if (managedInstitutions == null) {
     managedInstitutions = []
   }
@@ -165,12 +221,7 @@ async function buildUsersSubscriptionViewModel(user) {
   }
 
   personalSubscription = serializeMongooseObject(personalSubscription)
-  memberGroupSubscriptions = memberGroupSubscriptions.map(
-    serializeMongooseObject
-  )
-  managedGroupSubscriptions = managedGroupSubscriptions.map(
-    serializeMongooseObject
-  )
+
   managedInstitutions = managedInstitutions.map(serializeMongooseObject)
   await Promise.all(
     managedInstitutions.map(InstitutionsManager.promises.fetchV1Data)
@@ -267,19 +318,19 @@ async function buildUsersSubscriptionViewModel(user) {
       const pendingSubscriptionTax =
         personalSubscription.recurly.taxRate *
         recurlySubscription.pending_subscription.unit_amount_in_cents
-      personalSubscription.recurly.displayPrice =
-        SubscriptionFormatters.formatPrice(
-          recurlySubscription.pending_subscription.unit_amount_in_cents +
-            pendingAddOnPrice +
-            pendingAddOnTax +
-            pendingSubscriptionTax,
-          recurlySubscription.currency
-        )
-      personalSubscription.recurly.currentPlanDisplayPrice =
-        SubscriptionFormatters.formatPrice(
-          recurlySubscription.unit_amount_in_cents + addOnPrice + tax,
-          recurlySubscription.currency
-        )
+      personalSubscription.recurly.displayPrice = formatPrice(
+        recurlySubscription.pending_subscription.unit_amount_in_cents +
+          pendingAddOnPrice +
+          pendingAddOnTax +
+          pendingSubscriptionTax,
+        recurlySubscription.currency,
+        locale
+      )
+      personalSubscription.recurly.currentPlanDisplayPrice = formatPrice(
+        recurlySubscription.unit_amount_in_cents + addOnPrice + tax,
+        recurlySubscription.currency,
+        locale
+      )
       const pendingTotalLicenses =
         (pendingPlan.membersLimit || 0) + pendingAdditionalLicenses
       personalSubscription.recurly.pendingAdditionalLicenses =
@@ -287,39 +338,12 @@ async function buildUsersSubscriptionViewModel(user) {
       personalSubscription.recurly.pendingTotalLicenses = pendingTotalLicenses
       personalSubscription.pendingPlan = pendingPlan
     } else {
-      personalSubscription.recurly.displayPrice =
-        SubscriptionFormatters.formatPrice(
-          recurlySubscription.unit_amount_in_cents + addOnPrice + tax,
-          recurlySubscription.currency
-        )
-    }
-  }
-
-  for (const memberGroupSubscription of memberGroupSubscriptions) {
-    if (
-      memberGroupSubscription.manager_ids?.some(
-        id => id.toString() === user._id.toString()
-      )
-    ) {
-      memberGroupSubscription.userIsGroupManager = true
-    }
-    if (memberGroupSubscription.teamNotice) {
-      memberGroupSubscription.teamNotice = sanitizeHtml(
-        memberGroupSubscription.teamNotice
+      personalSubscription.recurly.displayPrice = formatPrice(
+        recurlySubscription.unit_amount_in_cents + addOnPrice + tax,
+        recurlySubscription.currency,
+        locale
       )
     }
-    buildGroupSubscriptionForView(memberGroupSubscription)
-  }
-
-  for (const managedGroupSubscription of managedGroupSubscriptions) {
-    if (
-      managedGroupSubscription.member_ids?.some(
-        id => id.toString() === user._id.toString()
-      )
-    ) {
-      managedGroupSubscription.userIsGroupMember = true
-    }
-    buildGroupSubscriptionForView(managedGroupSubscription)
   }
 
   return {
@@ -386,10 +410,14 @@ async function getBestSubscription(user) {
         groupSubscription.planCode
       )
       if (_isPlanEqualOrBetter(plan, bestSubscription.plan)) {
+        const groupDataForView = {}
+        if (groupSubscription.teamName) {
+          groupDataForView.teamName = groupSubscription.teamName
+        }
         const remainingTrialDays = _getRemainingTrialDays(groupSubscription)
         bestSubscription = {
           type: 'group',
-          subscription: groupSubscription,
+          subscription: groupDataForView,
           plan,
           remainingTrialDays,
         }

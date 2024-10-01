@@ -6,6 +6,7 @@ const request = require('request')
 const settings = require('@overleaf/settings')
 const SessionManager = require('../Authentication/SessionManager')
 const UserGetter = require('../User/UserGetter')
+const ProjectGetter = require('../Project/ProjectGetter')
 const Errors = require('../Errors/Errors')
 const HistoryManager = require('./HistoryManager')
 const ProjectDetailsHandler = require('../Project/ProjectDetailsHandler')
@@ -35,6 +36,30 @@ module.exports = HistoryController = {
         next(err)
       }
     })
+  },
+
+  getBlob(req, res, next) {
+    const { project_id: projectId, blob } = req.params
+
+    ProjectGetter.getProject(
+      projectId,
+      { 'overleaf.history.id': true },
+      (err, project) => {
+        if (err) return next(err)
+
+        const url = new URL(settings.apis.project_history.url)
+        url.pathname = `/project/${project.overleaf.history.id}/blob/${blob}`
+
+        pipeline(request(url.href), res, err => {
+          // If the downstream request is cancelled, we get an
+          // ERR_STREAM_PREMATURE_CLOSE.
+          if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger.warn({ url, err }, 'history API error')
+            next(err)
+          }
+        })
+      }
+    )
   },
 
   proxyToHistoryApiAndInjectUserDetails(req, res, next) {
@@ -67,15 +92,24 @@ module.exports = HistoryController = {
     // increase timeout to 6 minutes
     res.setTimeout(6 * 60 * 1000)
     const projectId = req.params.Project_id
-    ProjectEntityUpdateHandler.resyncProjectHistory(projectId, function (err) {
-      if (err instanceof Errors.ProjectHistoryDisabledError) {
-        return res.sendStatus(404)
+    const opts = {}
+    const historyRangesMigration = req.body.historyRangesMigration
+    if (historyRangesMigration) {
+      opts.historyRangesMigration = historyRangesMigration
+    }
+    ProjectEntityUpdateHandler.resyncProjectHistory(
+      projectId,
+      opts,
+      function (err) {
+        if (err instanceof Errors.ProjectHistoryDisabledError) {
+          return res.sendStatus(404)
+        }
+        if (err) {
+          return next(err)
+        }
+        res.sendStatus(204)
       }
-      if (err) {
-        return next(err)
-      }
-      res.sendStatus(204)
-    })
+    )
   },
 
   restoreFileFromV2(req, res, next) {
@@ -97,6 +131,40 @@ module.exports = HistoryController = {
         })
       }
     )
+  },
+
+  revertFile(req, res, next) {
+    const { project_id: projectId } = req.params
+    const { version, pathname } = req.body
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    RestoreManager.revertFile(
+      userId,
+      projectId,
+      version,
+      pathname,
+      {},
+      function (err, entity) {
+        if (err) {
+          return next(err)
+        }
+        res.json({
+          type: entity.type,
+          id: entity._id,
+        })
+      }
+    )
+  },
+
+  revertProject(req, res, next) {
+    const { project_id: projectId } = req.params
+    const { version } = req.body
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    RestoreManager.revertProject(userId, projectId, version, function (err) {
+      if (err) {
+        return next(err)
+      }
+      res.sendStatus(200)
+    })
   },
 
   getLabels(req, res, next) {
@@ -218,16 +286,35 @@ module.exports = HistoryController = {
   deleteLabel(req, res, next) {
     const { Project_id: projectId, label_id: labelId } = req.params
     const userId = SessionManager.getLoggedInUserId(req.session)
-    HistoryController._makeRequest(
+
+    ProjectGetter.getProject(
+      projectId,
       {
-        method: 'DELETE',
-        url: `${settings.apis.project_history.url}/project/${projectId}/user/${userId}/labels/${labelId}`,
+        owner_ref: true,
       },
-      function (err) {
+      (err, project) => {
         if (err) {
           return next(err)
         }
-        res.sendStatus(204)
+
+        // If the current user is the project owner, we can use the non-user-specific delete label endpoint.
+        // Otherwise, we have to use the user-specific version (which only deletes the label if it is owned by the user)
+        const deleteEndpointUrl = project.owner_ref.equals(userId)
+          ? `${settings.apis.project_history.url}/project/${projectId}/labels/${labelId}`
+          : `${settings.apis.project_history.url}/project/${projectId}/user/${userId}/labels/${labelId}`
+
+        HistoryController._makeRequest(
+          {
+            method: 'DELETE',
+            url: deleteEndpointUrl,
+          },
+          function (err) {
+            if (err) {
+              return next(err)
+            }
+            res.sendStatus(204)
+          }
+        )
       }
     )
   },

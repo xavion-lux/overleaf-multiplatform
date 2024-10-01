@@ -68,13 +68,13 @@ const TokenGenerator = {
       function (cb) {
         const token = TokenGenerator.readOnlyToken()
 
-        if (!Features.hasFeature('overleaf-integration')) {
+        if (!Features.hasFeature('saas')) {
           return cb(null, token)
         }
 
         return V1Api.request(
           {
-            url: `/api/v1/sharelatex/docs/read_token/${token}/exists`,
+            url: `/api/v1/overleaf/docs/read_token/${token}/exists`,
             json: true,
           },
           function (err, response, body) {

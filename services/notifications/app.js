@@ -4,7 +4,7 @@ require('@overleaf/metrics/initialize')
 const metrics = require('@overleaf/metrics')
 const Settings = require('@overleaf/settings')
 const logger = require('@overleaf/logger')
-logger.initialize('notifications-sharelatex')
+logger.initialize('notifications')
 const express = require('express')
 const app = express()
 const methodOverride = require('method-override')
@@ -34,7 +34,7 @@ app.delete('/key/:key', controller.removeNotificationByKeyOnly)
 app.get('/key/:key/count', controller.countNotificationsByKeyOnly)
 app.delete('/key/:key/bulk', controller.deleteUnreadNotificationsByKeyOnlyBulk)
 
-app.get('/status', (req, res) => res.send('notifications sharelatex up'))
+app.get('/status', (req, res) => res.send('notifications is up'))
 
 app.get('/health_check', (req, res) =>
   HealthCheckController.check(function (err) {
@@ -49,7 +49,7 @@ app.get('/health_check', (req, res) =>
 
 app.get('*', (req, res) => res.sendStatus(404))
 
-const host = Settings.internal?.notifications?.host || 'localhost'
+const host = Settings.internal?.notifications?.host || '127.0.0.1'
 const port = Settings.internal?.notifications?.port || 3042
 
 mongoClient

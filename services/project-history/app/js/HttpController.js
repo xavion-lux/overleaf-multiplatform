@@ -17,16 +17,19 @@ import * as RetryManager from './RetryManager.js'
 import * as FlushManager from './FlushManager.js'
 import { pipeline } from 'stream'
 
+const ONE_DAY_IN_SECONDS = 24 * 60 * 60
+
 export function getProjectBlob(req, res, next) {
-  const projectId = req.params.project_id
+  const historyId = req.params.history_id
   const blobHash = req.params.hash
   HistoryStoreManager.getProjectBlobStream(
-    projectId,
+    historyId,
     blobHash,
     (err, stream) => {
       if (err != null) {
         return next(OError.tag(err))
       }
+      res.setHeader('Cache-Control', `private, max-age=${ONE_DAY_IN_SECONDS}`)
       pipeline(stream, res, err => {
         if (err) next(err)
         // res.end() is already called via 'end' event by pipeline.
@@ -201,6 +204,112 @@ export function getFileSnapshot(req, res, next) {
   )
 }
 
+export function getRangesSnapshot(req, res, next) {
+  const { project_id: projectId, version, pathname } = req.params
+  SnapshotManager.getRangesSnapshot(
+    projectId,
+    version,
+    pathname,
+    (err, ranges) => {
+      if (err) {
+        return next(OError.tag(err))
+      }
+      res.json(ranges)
+    }
+  )
+}
+
+export function getFileMetadataSnapshot(req, res, next) {
+  const { project_id: projectId, version, pathname } = req.params
+  SnapshotManager.getFileMetadataSnapshot(
+    projectId,
+    version,
+    pathname,
+    (err, data) => {
+      if (err) {
+        return next(OError.tag(err))
+      }
+      res.json(data)
+    }
+  )
+}
+
+export function getMostRecentChunk(req, res, next) {
+  const { project_id: projectId } = req.params
+  WebApiManager.getHistoryId(projectId, (error, historyId) => {
+    if (error) return next(OError.tag(error))
+
+    HistoryStoreManager.getMostRecentChunk(
+      projectId,
+      historyId,
+      (err, data) => {
+        if (err) return next(OError.tag(err))
+        res.json(data)
+      }
+    )
+  })
+}
+
+export function getLatestSnapshot(req, res, next) {
+  const { project_id: projectId } = req.params
+  WebApiManager.getHistoryId(projectId, (error, historyId) => {
+    if (error) return next(OError.tag(error))
+    SnapshotManager.getLatestSnapshot(
+      projectId,
+      historyId,
+      (error, details) => {
+        if (error != null) {
+          return next(error)
+        }
+        const { snapshot, version } = details
+        res.json({ snapshot: snapshot.toRaw(), version })
+      }
+    )
+  })
+}
+
+export function getChangesSince(req, res, next) {
+  const { project_id: projectId } = req.params
+  const { since } = req.query
+  WebApiManager.getHistoryId(projectId, (error, historyId) => {
+    if (error) return next(OError.tag(error))
+    SnapshotManager.getChangesSince(
+      projectId,
+      historyId,
+      since,
+      (error, changes) => {
+        if (error != null) {
+          return next(error)
+        }
+        res.json(changes.map(c => c.toRaw()))
+      }
+    )
+  })
+}
+
+export function getChangesInChunkSince(req, res, next) {
+  const { project_id: projectId } = req.params
+  const { since } = req.query
+  WebApiManager.getHistoryId(projectId, (error, historyId) => {
+    if (error) return next(OError.tag(error))
+    SnapshotManager.getChangesInChunkSince(
+      projectId,
+      historyId,
+      since,
+      (error, details) => {
+        if (error != null) {
+          return next(error)
+        }
+        const { latestStartVersion, changes } = details
+        res.json({
+          latestStartVersion,
+          changes: changes.map(c => c.toRaw()),
+        })
+      }
+    )
+  })
+}
+
 export function getProjectSnapshot(req, res, next) {
   const { project_id: projectId, version } = req.params
   SnapshotManager.getProjectSnapshot(
@@ -213,6 +322,16 @@ export function getProjectSnapshot(req, res, next) {
       res.json(snapshotData)
     }
   )
+}
+
+export function getPathsAtVersion(req, res, next) {
+  const { project_id: projectId, version } = req.params
+  SnapshotManager.getPathsAtVersion(projectId, version, (error, result) => {
+    if (error != null) {
+      return next(error)
+    }
+    res.json(result)
+  })
 }
 
 export function healthCheck(req, res) {
@@ -242,6 +361,9 @@ export function resyncProject(req, res, next) {
   const options = {}
   if (req.body.origin) {
     options.origin = req.body.origin
+  }
+  if (req.body.historyRangesMigration) {
+    options.historyRangesMigration = req.body.historyRangesMigration
   }
   if (req.query.force || req.body.force) {
     // this will delete the queue and clear the sync state
@@ -379,13 +501,29 @@ export function createLabel(req, res, next) {
   )
 }
 
-export function deleteLabel(req, res, next) {
+/**
+ * This will delete a label if it is owned by the current user. If you wish to
+ * delete a label regardless of the current user, then use `deleteLabel` instead.
+ */
+export function deleteLabelForUser(req, res, next) {
   const {
     project_id: projectId,
     user_id: userId,
     label_id: labelId,
   } = req.params
-  LabelsManager.deleteLabel(projectId, userId, labelId, error => {
+
+  LabelsManager.deleteLabelForUser(projectId, userId, labelId, error => {
+    if (error != null) {
+      return next(error)
+    }
+    res.sendStatus(204)
+  })
+}
+
+export function deleteLabel(req, res, next) {
+  const { project_id: projectId, label_id: labelId } = req.params
+
+  LabelsManager.deleteLabel(projectId, labelId, error => {
     if (error != null) {
       return next(error)
     }

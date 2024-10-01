@@ -1,4 +1,4 @@
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const _ = require('lodash')
 const { callbackify } = require('util')
 const logger = require('@overleaf/logger')
@@ -51,13 +51,11 @@ async function addEntity(params) {
     const job = {
       method: 'post',
       headers: {
-        sl_entity_id: entityId,
-        sl_entity_type: entityType,
-        sl_entity_rev: rev,
-        sl_project_id: projectId,
-        sl_all_user_ids: JSON.stringify([userId]),
-        sl_project_owner_user_id: projectUserIds[0],
-        sl_folder_id: folderId,
+        'x-entity-id': entityId,
+        'x-entity-rev': rev,
+        'x-entity-type': entityType,
+        'x-folder-id': folderId,
+        'x-project-id': projectId,
       },
       uri: buildTpdsUrl(userId, projectName, path),
       title: 'addFile',
@@ -123,11 +121,9 @@ async function deleteEntity(params) {
     const job = {
       method: 'delete',
       headers: {
-        sl_project_id: projectId,
-        sl_all_user_ids: JSON.stringify([userId]),
-        sl_project_owner_user_id: projectUserIds[0],
-        sl_entity_id: entityId,
-        sl_entity_type: entityType,
+        'x-entity-id': entityId,
+        'x-entity-type': entityType,
+        'x-project-id': projectId,
       },
       uri: buildTpdsUrl(userId, projectName, path),
       // We're sending a body with the DELETE request. This is unconventional,
@@ -135,7 +131,6 @@ async function deleteEntity(params) {
       // would be moved to a POST endpoint.
       json: { subtreeEntityIds },
       title: 'deleteEntity',
-      sl_all_user_ids: JSON.stringify([userId]),
     }
 
     await enqueue(userId, 'standardHttpRequest', job)
@@ -143,16 +138,14 @@ async function deleteEntity(params) {
 }
 
 async function createProject(params) {
-  if (!tpdsUrl) return // Server CE/Pro
+  if (!tpdsUrl) return // Overleaf Community Edition/Server Pro
 
-  const { projectId, projectName, ownerId, userId } = params
+  const { projectId, projectName, userId } = params
 
   const job = {
     method: 'post',
     headers: {
-      sl_project_id: projectId.toString(),
-      sl_all_user_ids: JSON.stringify([userId.toString()]),
-      sl_project_owner_user_id: ownerId.toString(),
+      'x-project-id': projectId,
     },
     uri: Path.join(
       tpdsUrl,
@@ -163,7 +156,6 @@ async function createProject(params) {
       encodeURIComponent(projectName)
     ),
     title: 'createProject',
-    sl_all_user_ids: JSON.stringify([userId]),
   }
 
   await enqueue(userId, 'standardHttpRequest', job)
@@ -215,19 +207,17 @@ async function moveEntity(params) {
 
   for (const userId of projectUserIds) {
     const headers = {
-      sl_project_id: projectId,
-      sl_entity_rev: rev,
-      sl_all_user_ids: JSON.stringify([userId]),
-      sl_project_owner_user_id: projectUserIds[0],
+      'x-project-id': projectId,
+      'x-entity-rev': rev,
     }
     if (entityId != null) {
-      headers.sl_entity_id = entityId
+      headers['x-entity-id'] = entityId
     }
     if (entityType != null) {
-      headers.sl_entity_type = entityType
+      headers['x-entity-type'] = entityType
     }
     if (folderId != null) {
-      headers.sl_folder_id = folderId
+      headers['x-folder-id'] = folderId
     }
     const job = {
       method: 'put',

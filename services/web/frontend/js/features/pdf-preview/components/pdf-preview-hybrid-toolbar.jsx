@@ -62,6 +62,7 @@ function PdfPreviewHybridToolbarInner() {
         <PdfHybridDownloadButton />
       </div>
       <div className="toolbar-pdf-right">
+        <div className="toolbar-pdf-controls" id="toolbar-pdf-controls" />
         <PdfHybridCodeCheckButton />
         <SwitchToEditorButton />
         <DetachedSynctexControl />

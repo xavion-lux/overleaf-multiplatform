@@ -1,6 +1,6 @@
 const { db, ObjectId } = require('../../../../app/src/infrastructure/mongodb')
 const { expect } = require('chai')
-const { promisify } = require('util')
+const { callbackifyClass } = require('@overleaf/promise-utils')
 const SubscriptionUpdater = require('../../../../app/src/Features/Subscription/SubscriptionUpdater')
 const PermissionsManager = require('../../../../app/src/Features/Authorization/PermissionsManager')
 const SSOConfigManager = require('../../../../modules/group-settings/app/src/sso/SSOConfigManager')
@@ -10,7 +10,7 @@ const DeletedSubscriptionModel =
   require('../../../../app/src/models/DeletedSubscription').DeletedSubscription
 const Modules = require('../../../../app/src/infrastructure/Modules')
 
-class Subscription {
+class PromisifiedSubscription {
   constructor(options = {}) {
     this.admin_id = options.adminId || new ObjectId()
     this.overleaf = options.overleaf || {}
@@ -28,134 +28,154 @@ class Subscription {
     this.groupPolicy = options.groupPolicy
   }
 
-  ensureExists(callback) {
+  async ensureExists() {
     if (this._id) {
-      return callback(null)
+      return null
     }
     const options = { upsert: true, new: true, setDefaultsOnInsert: true }
-    SubscriptionModel.findOneAndUpdate(
+    const subscription = await SubscriptionModel.findOneAndUpdate(
       { admin_id: this.admin_id },
       this,
-      options,
-      (error, subscription) => {
-        if (error) {
-          return callback(error)
-        }
-        this._id = subscription._id
-        callback()
-      }
-    )
+      options
+    ).exec()
+    this._id = subscription._id
   }
 
-  get(callback) {
-    db.subscriptions.findOne({ _id: new ObjectId(this._id) }, callback)
+  async get() {
+    return await db.subscriptions.findOne({ _id: new ObjectId(this._id) })
   }
 
-  getWithGroupPolicy(callback) {
-    SubscriptionModel.findById(this._id).populate('groupPolicy').exec(callback)
+  async getWithGroupPolicy() {
+    // eslint-disable-next-line no-restricted-syntax
+    return await SubscriptionModel.findById(this._id)
+      .populate('groupPolicy')
+      .exec()
   }
 
-  setManagerIds(managerIds, callback) {
-    return SubscriptionModel.findOneAndUpdate(
+  async setManagerIds(managerIds) {
+    return await SubscriptionModel.findOneAndUpdate(
       { _id: new ObjectId(this._id) },
-      { manager_ids: managerIds },
-      callback
+      { manager_ids: managerIds }
     )
   }
 
-  setSSOConfig(ssoConfig, callback) {
-    this.get((err, subscription) => {
-      if (err) {
-        return callback(err)
-      }
-      SSOConfigManager.promises
-        .updateSubscriptionSSOConfig(subscription, ssoConfig)
-        .then(result => callback(null, result))
-        .catch(error => callback(error))
-    })
+  async setSSOConfig(ssoConfig) {
+    const subscription = await this.get()
+
+    return await SSOConfigManager.promises.updateSubscriptionSSOConfig(
+      subscription,
+      ssoConfig
+    )
   }
 
-  refreshUsersFeatures(callback) {
-    SubscriptionUpdater.refreshUsersFeatures(this, callback)
+  async refreshUsersFeatures() {
+    return await SubscriptionUpdater.promises.refreshUsersFeatures(this)
   }
 
-  enableManagedUsers(callback) {
-    Modules.hooks.fire('enableManagedUsers', this._id, callback)
+  async enableManagedUsers() {
+    await Modules.promises.hooks.fire('enableManagedUsers', this._id)
   }
 
-  getEnrollmentForUser(user, callback) {
-    Modules.hooks.fire(
+  async enableFeatureSSO() {
+    await SubscriptionModel.findOneAndUpdate(
+      { _id: new ObjectId(this._id) },
+      { 'features.groupSSO': true }
+    ).exec()
+  }
+
+  async setValidatedSSO() {
+    const doc = await db.subscriptions.findOne({ _id: new ObjectId(this._id) })
+
+    const ssoConfigId = doc.ssoConfig
+
+    return await db.ssoConfigs.findOneAndUpdate(
+      { _id: ssoConfigId },
+      { $set: { validated: true } }
+    )
+  }
+
+  async setValidatedAndEnabledSSO() {
+    const doc = await db.subscriptions.findOne({ _id: new ObjectId(this._id) })
+
+    const ssoConfigId = doc.ssoConfig
+
+    return await db.ssoConfigs.findOneAndUpdate(
+      { _id: ssoConfigId },
+      { $set: { enabled: true, validated: true } }
+    )
+  }
+
+  async getEnrollmentForUser(user) {
+    const [enrollment] = await Modules.promises.hooks.fire(
       'getManagedUsersEnrollmentForUser',
-      user,
-      (error, [enrollment]) => {
-        callback(error, enrollment)
-      }
+      user
     )
+    return enrollment
   }
 
   getCapabilities(groupPolicy) {
     return PermissionsManager.getUserCapabilities(groupPolicy)
   }
 
-  getUserValidationStatus(params, callback) {
-    PermissionsManager.getUserValidationStatus(params, callback)
+  async getUserValidationStatus(params) {
+    return await PermissionsManager.promises.getUserValidationStatus(params)
   }
 
-  enrollManagedUser(user, callback) {
-    SubscriptionModel.findById(this._id).exec((error, subscription) => {
-      if (error) {
-        return callback(error)
-      }
-      Modules.hooks.fire(
-        'enrollInManagedSubscription',
-        user._id,
-        subscription,
-        callback
-      )
-    })
-  }
-
-  expectDeleted(deleterData, callback) {
-    DeletedSubscriptionModel.find(
-      { 'subscription._id': this._id },
-      (error, deletedSubscriptions) => {
-        if (error) {
-          return callback(error)
-        }
-        expect(deletedSubscriptions.length).to.equal(1)
-
-        const deletedSubscription = deletedSubscriptions[0]
-        expect(deletedSubscription.subscription.teamInvites).to.be.empty
-        expect(deletedSubscription.subscription.invited_emails).to.be.empty
-        expect(deletedSubscription.deleterData.deleterIpAddress).to.equal(
-          deleterData.ip
-        )
-        if (deleterData.id) {
-          expect(deletedSubscription.deleterData.deleterId.toString()).to.equal(
-            deleterData.id.toString()
-          )
-        } else {
-          expect(deletedSubscription.deleterData.deleterId).to.be.undefined
-        }
-        SubscriptionModel.findById(this._id, (error, subscription) => {
-          expect(subscription).to.be.null
-          callback(error)
-        })
-      }
+  async enrollManagedUser(user) {
+    const subscription = await SubscriptionModel.findById(this._id).exec()
+    return await Modules.promises.hooks.fire(
+      'enrollInManagedSubscription',
+      user._id,
+      subscription
     )
+  }
+
+  async expectDeleted(deleterData) {
+    const deletedSubscriptions = await DeletedSubscriptionModel.find({
+      'subscription._id': this._id,
+    }).exec()
+
+    expect(deletedSubscriptions.length).to.equal(1)
+
+    const deletedSubscription = deletedSubscriptions[0]
+    expect(deletedSubscription.subscription.teamInvites).to.be.empty
+    expect(deletedSubscription.subscription.invited_emails).to.be.empty
+    expect(deletedSubscription.deleterData.deleterIpAddress).to.equal(
+      deleterData.ip
+    )
+    if (deleterData.id) {
+      expect(deletedSubscription.deleterData.deleterId.toString()).to.equal(
+        deleterData.id.toString()
+      )
+    } else {
+      expect(deletedSubscription.deleterData.deleterId).to.be.undefined
+    }
+
+    const subscription = await SubscriptionModel.findById(this._id).exec()
+    expect(subscription).to.be.null
+  }
+
+  async addMember(userId) {
+    return await SubscriptionModel.findOneAndUpdate(
+      { _id: new ObjectId(this._id) },
+      { $push: { member_ids: userId } }
+    ).exec()
+  }
+
+  async inviteUser(adminUser, email) {
+    await adminUser.login()
+    return await adminUser.doRequest('POST', {
+      url: `/manage/groups/${this._id}/invites`,
+      json: {
+        email,
+      },
+    })
   }
 }
 
-Subscription.promises = class extends Subscription {}
-
-// promisify User class methods - works for methods with 0-1 output parameters,
-// otherwise we will need to implement the method manually instead
-const nonPromiseMethods = ['constructor', 'getCapabilities']
-Object.getOwnPropertyNames(Subscription.prototype).forEach(methodName => {
-  const method = Subscription.prototype[methodName]
-  if (typeof method === 'function' && !nonPromiseMethods.includes(methodName)) {
-    Subscription.promises.prototype[methodName] = promisify(method)
-  }
+const Subscription = callbackifyClass(PromisifiedSubscription, {
+  without: ['getCapabilities'],
 })
+Subscription.promises = class extends PromisifiedSubscription {}
 
 module.exports = Subscription

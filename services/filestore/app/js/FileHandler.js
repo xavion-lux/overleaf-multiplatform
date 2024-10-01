@@ -7,6 +7,7 @@ const FileConverter = require('./FileConverter')
 const KeyBuilder = require('./KeyBuilder')
 const ImageOptimiser = require('./ImageOptimiser')
 const { ConversionError, InvalidParametersError } = require('./Errors')
+const metrics = require('@overleaf/metrics')
 
 module.exports = {
   insertFile: callbackify(insertFile),
@@ -71,11 +72,13 @@ async function deleteProject(bucket, key) {
 async function getFile(bucket, key, opts) {
   opts = opts || {}
   if (!opts.format && !opts.style) {
-    return PersistorManager.getObjectStream(bucket, key, opts)
+    return await PersistorManager.getObjectStream(bucket, key, opts)
   } else {
-    return _getConvertedFile(bucket, key, opts)
+    return await _getConvertedFile(bucket, key, opts)
   }
 }
+
+let ACTIVE_SIGNED_URL_CALLS = 0
 
 async function getRedirectUrl(bucket, key, opts) {
   // if we're doing anything unusual with options, or the request isn't for
@@ -89,14 +92,29 @@ async function getRedirectUrl(bucket, key, opts) {
     Object.values(Settings.filestore.stores).includes(bucket) &&
     Settings.filestore.allowRedirects
   ) {
-    return PersistorManager.getRedirectUrl(bucket, key)
+    // record the number of in-flight calls to generate signed URLs
+    metrics.gauge('active_signed_url_calls', ++ACTIVE_SIGNED_URL_CALLS, {
+      path: bucket,
+    })
+    try {
+      const timer = new metrics.Timer('signed_url_call_time', {
+        path: bucket,
+      })
+      const redirectUrl = await PersistorManager.getRedirectUrl(bucket, key)
+      timer.done()
+      return redirectUrl
+    } finally {
+      metrics.gauge('active_signed_url_calls', --ACTIVE_SIGNED_URL_CALLS, {
+        path: bucket,
+      })
+    }
   }
 
   return null
 }
 
 async function getFileSize(bucket, key) {
-  return PersistorManager.getObjectSize(bucket, key)
+  return await PersistorManager.getObjectSize(bucket, key)
 }
 
 async function getDirectorySize(bucket, projectId) {
@@ -110,9 +128,9 @@ async function _getConvertedFile(bucket, key, opts) {
     convertedKey
   )
   if (exists) {
-    return PersistorManager.getObjectStream(bucket, convertedKey, opts)
+    return await PersistorManager.getObjectStream(bucket, convertedKey, opts)
   } else {
-    return _getConvertedFileAndCache(bucket, key, convertedKey, opts)
+    return await _getConvertedFileAndCache(bucket, key, convertedKey, opts)
   }
 }
 
@@ -194,5 +212,5 @@ async function _convertFile(bucket, originalKey, opts) {
 
 async function _writeFileToDisk(bucket, key, opts) {
   const fileStream = await PersistorManager.getObjectStream(bucket, key, opts)
-  return LocalFileWriter.promises.writeStream(fileStream, key)
+  return await LocalFileWriter.promises.writeStream(fileStream, key)
 }

@@ -1,10 +1,12 @@
-extends ../layout-marketing
+extends ../layout-react
 
 block entrypointVar
 	- entrypoint = 'pages/project-list'
 
 block vars
 	- var suppressNavContentLinks = true
+	- bootstrap5PageStatus = 'enabled' // One of 'disabled', 'enabled', and 'queryStringOnly'
+	- bootstrap5PageSplitTest = 'bootstrap-5-project-dashboard'
 
 block append meta
 	meta(name="ol-usersBestSubscription" data-type="json" content=usersBestSubscription)
@@ -29,13 +31,11 @@ block append meta
 	meta(name="ol-showWritefullPromoBanner" data-type="boolean" content=showWritefullPromoBanner)
 	meta(name="ol-groupsAndEnterpriseBannerVariant" data-type="string" content=groupsAndEnterpriseBannerVariant)
 	meta(name="ol-showInrGeoBanner" data-type="boolean" content=showInrGeoBanner)
-	meta(name="ol-inrGeoBannerVariant" data-type="string" content=inrGeoBannerVariant)
-	meta(name="ol-inrGeoBannerSplitTestName" data-type="string" content=inrGeoBannerSplitTestName)
-	meta(name="ol-showLATAMBanner" data-type="boolean" content=showLATAMBanner)
+	meta(name="ol-showBrlGeoBanner" data-type="boolean" content=showBrlGeoBanner)
 	meta(name="ol-recommendedCurrency" data-type="string" content=recommendedCurrency)
+	meta(name="ol-showLATAMBanner" data-type="boolean" content=showLATAMBanner)
 	meta(name="ol-groupSubscriptionsPendingEnrollment" data-type="json" content=groupSubscriptionsPendingEnrollment)
 	meta(name="ol-hasIndividualRecurlySubscription" data-type="boolean" content=hasIndividualRecurlySubscription)
-	meta(name="ol-newNotificationStyle" data-type="boolean" content=newNotificationStyle)
 	meta(name="ol-groupSsoSetupSuccess" data-type="boolean" content=groupSsoSetupSuccess)
 
 block content

@@ -1,3 +1,5 @@
+import getMeta from '@/utils/meta'
+
 function loadGA() {
   if (window.olLoadGA) {
     window.olLoadGA()
@@ -6,9 +8,10 @@ function loadGA() {
 
 function setConsent(value) {
   document.querySelector('.cookie-banner').classList.add('hidden')
-  const cookieDomain = window.ExposedSettings.cookieDomain
+  const cookieDomain = getMeta('ol-ExposedSettings').cookieDomain
   const oneYearInSeconds = 60 * 60 * 24 * 365
   const cookieAttributes =
+    '; path=/' +
     '; domain=' +
     cookieDomain +
     '; max-age=' +
@@ -22,7 +25,10 @@ function setConsent(value) {
   }
 }
 
-if (window.ExposedSettings.gaToken || window.ExposedSettings.gaTokenV4) {
+if (
+  getMeta('ol-ExposedSettings').gaToken ||
+  getMeta('ol-ExposedSettings').gaTokenV4
+) {
   document
     .querySelectorAll('[data-ol-cookie-banner-set-consent]')
     .forEach(el => {

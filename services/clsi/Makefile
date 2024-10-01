@@ -12,13 +12,15 @@ DOCKER_COMPOSE := BUILD_NUMBER=$(BUILD_NUMBER) \
 	BRANCH_NAME=$(BRANCH_NAME) \
 	PROJECT_NAME=$(PROJECT_NAME) \
 	MOCHA_GREP=${MOCHA_GREP} \
-	docker-compose ${DOCKER_COMPOSE_FLAGS}
+	docker compose ${DOCKER_COMPOSE_FLAGS}
 
+COMPOSE_PROJECT_NAME_TEST_ACCEPTANCE ?= test_acceptance_$(BUILD_DIR_NAME)
 DOCKER_COMPOSE_TEST_ACCEPTANCE = \
-	COMPOSE_PROJECT_NAME=test_acceptance_$(BUILD_DIR_NAME) $(DOCKER_COMPOSE)
+	COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME_TEST_ACCEPTANCE) $(DOCKER_COMPOSE)
 
+COMPOSE_PROJECT_NAME_TEST_UNIT ?= test_unit_$(BUILD_DIR_NAME)
 DOCKER_COMPOSE_TEST_UNIT = \
-	COMPOSE_PROJECT_NAME=test_unit_$(BUILD_DIR_NAME) $(DOCKER_COMPOSE)
+	COMPOSE_PROJECT_NAME=$(COMPOSE_PROJECT_NAME_TEST_UNIT) $(DOCKER_COMPOSE)
 
 clean:
 	-docker rmi ci/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER)
@@ -31,10 +33,18 @@ HERE=$(shell pwd)
 MONOREPO=$(shell cd ../../ && pwd)
 # Run the linting commands in the scope of the monorepo.
 # Eslint and prettier (plus some configs) are on the root.
-RUN_LINTING = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(HERE) node:18.18.2 npm run --silent
+RUN_LINTING = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(HERE) node:18.20.2 npm run --silent
+
+RUN_LINTING_CI = docker run --rm --volume $(MONOREPO)/.editorconfig:/overleaf/.editorconfig --volume $(MONOREPO)/.eslintignore:/overleaf/.eslintignore --volume $(MONOREPO)/.eslintrc:/overleaf/.eslintrc --volume $(MONOREPO)/.prettierignore:/overleaf/.prettierignore --volume $(MONOREPO)/.prettierrc:/overleaf/.prettierrc --volume $(MONOREPO)/tsconfig.backend.json:/overleaf/tsconfig.backend.json ci/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) npm run --silent
+
+# Same but from the top of the monorepo
+RUN_LINTING_MONOREPO = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(MONOREPO) node:18.20.2 npm run --silent
 
 format:
 	$(RUN_LINTING) format
+
+format_ci:
+	$(RUN_LINTING_CI) format
 
 format_fix:
 	$(RUN_LINTING) format:fix
@@ -42,11 +52,17 @@ format_fix:
 lint:
 	$(RUN_LINTING) lint
 
+lint_ci:
+	$(RUN_LINTING_CI) lint
+
 lint_fix:
 	$(RUN_LINTING) lint:fix
 
 typecheck:
-	$(RUN_LINTING) typecheck
+	$(RUN_LINTING) types:check
+
+typecheck_ci:
+	$(RUN_LINTING_CI) types:check
 
 test: format lint typecheck test_unit test_acceptance
 
@@ -91,30 +107,15 @@ benchmarks:
 	$(DOCKER_COMPOSE_TEST_ACCEPTANCE) run --rm test_acceptance npm run benchmarks
 
 build:
-	docker pull gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		|| docker pull gcr.io/overleaf-ops/$(PROJECT_NAME):main-deps \
-		|| echo 'nothing cached for gcr.io/overleaf-ops'
-	docker pull us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		|| docker pull us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):main-deps \
-		|| echo 'nothing cached for us-east1-docker.pkg.dev/overleaf-ops/ol-docker'
 	docker build \
-	 	--pull \
+		--pull \
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
-		--tag gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		--cache-from gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		--cache-from gcr.io/overleaf-ops/$(PROJECT_NAME):main-deps \
-		--tag us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		--cache-from us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
-		--cache-from us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):main-deps \
-		--target base \
-		--file Dockerfile \
-		../..
-
-	docker build --pull --tag ci/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) \
+		--tag ci/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) \
 		--tag gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) \
-		--cache-from gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
+		--tag gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME) \
+		--cache-from gcr.io/overleaf-ops/$(PROJECT_NAME):$(BRANCH_NAME) \
+		--cache-from gcr.io/overleaf-ops/$(PROJECT_NAME):main \
 		--tag us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) \
-		--cache-from us-east1-docker.pkg.dev/overleaf-ops/ol-docker/$(PROJECT_NAME):$(BRANCH_NAME)-deps \
 		--file Dockerfile \
 		../..
 
@@ -126,4 +127,13 @@ publish:
 	docker push $(DOCKER_REPO)/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER)
 
 
-.PHONY: clean test test_unit test_acceptance test_clean benchmarks build publish
+.PHONY: clean \
+	format format_fix \
+	lint lint_fix \
+	build_types typecheck \
+	lint_ci format_ci typecheck_ci \
+	test test_clean test_unit test_unit_clean \
+	test_acceptance test_acceptance_debug test_acceptance_pre_run \
+	test_acceptance_run test_acceptance_run_debug test_acceptance_clean \
+	benchmarks \
+	build tar publish \

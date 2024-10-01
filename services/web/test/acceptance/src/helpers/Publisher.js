@@ -1,9 +1,10 @@
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const PublisherModel = require('../../../../app/src/models/Publisher').Publisher
+const { callbackifyClass } = require('@overleaf/promise-utils')
 
 let count = parseInt(Math.random() * 999999)
 
-class Publisher {
+class PromisifiedPublisher {
   constructor(options = {}) {
     this.slug = options.slug || `publisher-slug-${count}`
     this.managerIds = []
@@ -11,22 +12,27 @@ class Publisher {
     count += 1
   }
 
-  ensureExists(callback) {
+  async ensureExists() {
     const filter = { slug: this.slug }
     const options = { upsert: true, new: true, setDefaultsOnInsert: true }
-    PublisherModel.findOneAndUpdate(filter, {}, options, (error, publisher) => {
-      this._id = publisher._id
-      callback(error)
-    })
+    const publisher = await PublisherModel.findOneAndUpdate(
+      filter,
+      {},
+      options
+    ).exec()
+
+    this._id = publisher._id
   }
 
-  setManagerIds(managerIds, callback) {
-    return PublisherModel.findOneAndUpdate(
+  async setManagerIds(managerIds) {
+    return await PublisherModel.findOneAndUpdate(
       { _id: new ObjectId(this._id) },
-      { managerIds },
-      callback
-    )
+      { managerIds }
+    ).exec()
   }
 }
+
+const Publisher = callbackifyClass(PromisifiedPublisher)
+Publisher.promises = class extends PromisifiedPublisher {}
 
 module.exports = Publisher

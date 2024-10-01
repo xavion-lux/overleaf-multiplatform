@@ -5,11 +5,15 @@ const Settings = {
   internal: {
     docstore: {
       port: 3016,
-      host: process.env.LISTEN_ADDRESS || 'localhost',
+      host: process.env.LISTEN_ADDRESS || '127.0.0.1',
     },
   },
 
-  mongo: {},
+  mongo: {
+    options: {
+      monitorCommands: true,
+    },
+  },
 
   docstore: {
     archiveOnSoftDelete: process.env.ARCHIVE_ON_SOFT_DELETE === 'true',

@@ -38,7 +38,7 @@ async function createProject(req, res) {
 async function mergeUpdate(req, res) {
   metrics.inc('tpds.merge-update')
   const { filePath, userId, projectId, projectName } = parseParams(req)
-  const source = req.headers['x-sl-update-source'] || 'unknown'
+  const source = req.headers['x-update-source'] || 'unknown'
 
   let metadata
   try {
@@ -92,7 +92,7 @@ async function mergeUpdate(req, res) {
 async function deleteUpdate(req, res) {
   metrics.inc('tpds.delete-update')
   const { filePath, userId, projectId, projectName } = parseParams(req)
-  const source = req.headers['x-sl-update-source'] || 'unknown'
+  const source = req.headers['x-update-source'] || 'unknown'
 
   await TpdsUpdateHandler.promises.deleteUpdate(
     userId,
@@ -141,12 +141,15 @@ async function updateFolder(req, res) {
 async function updateProjectContents(req, res, next) {
   const projectId = req.params.project_id
   const path = `/${req.params[0]}` // UpdateMerger expects leading slash
-  const source = req.headers['x-sl-update-source'] || 'unknown'
+  const source = req.headers['x-update-source'] || 'unknown'
 
   try {
     await UpdateMerger.promises.mergeUpdate(null, projectId, path, req, source)
   } catch (error) {
-    if (error.constructor === Errors.InvalidNameError) {
+    if (
+      error instanceof Errors.InvalidNameError ||
+      error instanceof Errors.DuplicateNameError
+    ) {
       return res.sendStatus(422)
     } else {
       throw error
@@ -158,7 +161,7 @@ async function updateProjectContents(req, res, next) {
 async function deleteProjectContents(req, res, next) {
   const projectId = req.params.project_id
   const path = `/${req.params[0]}` // UpdateMerger expects leading slash
-  const source = req.headers['x-sl-update-source'] || 'unknown'
+  const source = req.headers['x-update-source'] || 'unknown'
 
   await UpdateMerger.promises.deleteUpdate(null, projectId, path, source)
   res.sendStatus(200)

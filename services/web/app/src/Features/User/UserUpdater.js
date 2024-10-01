@@ -75,7 +75,10 @@ async function addEmailAddress(userId, newEmail, affiliationOptions, auditLog) {
 
   await UserGetter.promises.ensureUniqueEmailAddress(newEmail)
 
-  AnalyticsManager.recordEventForUser(userId, 'secondary-email-added')
+  AnalyticsManager.recordEventForUserInBackground(
+    userId,
+    'secondary-email-added'
+  )
 
   await UserAuditLogHandler.promises.addEntry(
     userId,
@@ -128,8 +131,10 @@ async function clearSAMLData(userId, auditLog, sendEmail) {
     $unset: {
       samlIdentifiers: 1,
       'emails.$[].samlProviderId': 1,
+      'enrollment.sso': 1,
     },
   }
+
   await updateUser(userId, update)
 
   for (const emailData of user.emails) {
@@ -199,7 +204,10 @@ async function setDefaultEmailAddress(
     throw new Error('email update error')
   }
 
-  AnalyticsManager.recordEventForUser(userId, 'primary-email-address-updated')
+  AnalyticsManager.recordEventForUserInBackground(
+    userId,
+    'primary-email-address-updated'
+  )
 
   if (sendSecurityAlert) {
     // no need to wait, errors are logged and not passed back
@@ -352,9 +360,8 @@ async function maybeCreateRedundantSubscriptionNotification(userId, email) {
     return
   }
 
-  const affiliations = await InstitutionsAPI.promises.getUserAffiliations(
-    userId
-  )
+  const affiliations =
+    await InstitutionsAPI.promises.getUserAffiliations(userId)
   const confirmedAffiliation = affiliations.find(a => a.email === email)
   if (!confirmedAffiliation || confirmedAffiliation.licence === 'free') {
     return

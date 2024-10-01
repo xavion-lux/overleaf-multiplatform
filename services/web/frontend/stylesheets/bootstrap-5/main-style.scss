@@ -1,0 +1,32 @@
+// Web fonts
+@import '../../fonts/noto-sans';
+@import '../../fonts/dm-mono';
+@import '../../fonts/merriweather';
+@import '../../fonts/source-code-pro';
+@import '../../fonts/stix-two-math';
+@import '../../fonts/noto-serif';
+@import '../../fonts/material-symbols';
+@import '../../fonts/font-awesome';
+
+// Vendor CSS
+// TODO Bootstrap 5: Check whether this works with Bootstrap 5, and whether we can replace it
+@import '../vendor/select/select';
+
+// Boostrap-related
+
+// Note that files containing Bootstrap or Sass files that interact with
+// Bootstrap's Sass variables must use @import rather than @use because
+// Bootstrap relies on its variables, mixins etc. all being global.
+
+// Include Bootstrap 5 itself, plus overrides and extend Bootstrap styles.
+@import 'base/bootstrap';
+
+// Typography-related
+@import 'base/typography';
+
+// Link styles
+@import 'base/links';
+@import 'base/base';
+
+// Page layout that isn't related to a particular component or page
+@import 'base/layout';

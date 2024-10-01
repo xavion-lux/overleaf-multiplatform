@@ -1,11 +1,11 @@
-/** @module */
+// @ts-check
 'use strict'
 
-const path = require('path')
+const path = require('path-browserify')
 
 /**
  * Regular expressions for Overleaf v2 taken from
- * https://github.com/sharelatex/web-sharelatex/blob/master/app/coffee/Features/Project/SafePath.coffee
+ * https://github.com/overleaf/internal/blob/f7b287b6a07354000a6b463ca3a5828104e4a811/services/web/app/src/Features/Project/SafePath.js
  */
 
 //
@@ -39,6 +39,7 @@ const MAX_PATH = 1024
 /**
  * Replace invalid characters and filename patterns in a filename with
  * underscores.
+ * @param {string} filename
  */
 function cleanPart(filename) {
   filename = filename.replace(BAD_CHAR_RX, '_')

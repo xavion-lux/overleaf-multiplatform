@@ -13,26 +13,19 @@
     "verror"
   ],
   "main": "index.cjs",
-  "types": "types/index.cjs",
   "files": [
-    "index.cjs",
-    "index.d.ts"
+    "index.cjs"
   ],
   "scripts": {
-    "build": "npm run --silent typecheck && npm run --silent test && npm run --silent declaration:build && npm run --silent update-readme",
-    "declaration:build": "rm -f index.d.ts && tsc --allowJs --declaration --emitDeclarationOnly --moduleResolution node --target ES6 index.js",
-    "declaration:check": "git diff --exit-code -- index.d.ts",
-    "lint": "eslint --ext .js --ext .cjs --max-warnings 0 --format unix .",
-    "lint:fix": "eslint --fix --ext .js --ext .cjs .",
-    "prepublishOnly": "npm run --silent declaration:build && npm run --silent declaration:check",
-    "test": "npm run lint && npm run format && npm run typecheck && npm run test:unit",
-    "typecheck": "tsc --noEmit",
-    "update-readme": "doc/update-readme.js",
-    "format": "prettier --list-different $PWD/'**/*.{js,cjs}'",
-    "format:fix": "prettier --write $PWD/'**/*.{js,cjs}'",
+    "build": "npm run --silent test",
+    "lint": "eslint --ext .js --ext .cjs --ext .ts --max-warnings 0 --format unix .",
+    "lint:fix": "eslint --fix --ext .js --ext .cjs --ext .ts .",
+    "test": "npm run lint && npm run format && npm run types:check && npm run test:unit",
+    "format": "prettier --list-different $PWD/'**/*.{js,cjs,ts}'",
+    "format:fix": "prettier --write $PWD/'**/*.{js,cjs,ts}'",
     "test:ci": "npm run test:unit",
     "test:unit": "mocha --exit test/**/*.{js,cjs}",
-    "update-types": "rm -rf types && tsc --emitDeclarationOnly"
+    "types:check": "tsc --noEmit"
   },
   "author": "Overleaf (https://www.overleaf.com)",
   "license": "MIT",

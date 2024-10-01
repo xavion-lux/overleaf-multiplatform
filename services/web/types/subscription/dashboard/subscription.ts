@@ -1,4 +1,4 @@
-import { CurrencyCode } from '../../../frontend/js/features/subscription/data/currency'
+import { CurrencyCode } from '../currency'
 import { Nullable } from '../../utils'
 import { Plan } from '../plan'
 import { User } from '../../user'
@@ -73,14 +73,18 @@ export type GroupSubscription = RecurlySubscription & {
   teamNotice?: string
 }
 
-export type ManagedGroupSubscription = Omit<GroupSubscription, 'admin_id'> & {
+export type ManagedGroupSubscription = {
+  _id: string
   userIsGroupMember: boolean
   planLevelName: string
-  admin_id: User
-  features: {
-    groupSSO: boolean
-    managedUsers: boolean
+  admin_id: {
+    email: string
   }
+  features: {
+    groupSSO: boolean | null
+    managedUsers: boolean | null
+  }
+  teamName?: string
 }
 
 export type MemberGroupSubscription = Omit<GroupSubscription, 'admin_id'> & {

@@ -7,9 +7,9 @@ import {
 import { languages } from '../languages'
 import { ViewPlugin } from '@codemirror/view'
 import { indentUnit, LanguageDescription } from '@codemirror/language'
-import { Metadata } from '../../../../../types/metadata'
-import { CurrentDoc } from '../../../../../types/current-doc'
 import { updateHasEffect } from '../utils/effects'
+import { Folder } from '../../../../../types/folder'
+import { Command } from '@/features/ide-react/context/metadata-context'
 
 export const languageLoadedEffect = StateEffect.define()
 export const hasLanguageLoadedEffect = updateHasEffect(languageLoadedEffect)
@@ -18,6 +18,14 @@ const languageConf = new Compartment()
 
 type Options = {
   syntaxValidation: boolean
+}
+
+type Metadata = {
+  labels: Set<string>
+  packageNames: Set<string>
+  commands: Command[]
+  referenceKeys: Set<string>
+  fileTreeData: Folder
 }
 
 /**
@@ -35,18 +43,26 @@ export const metadataState = StateField.define<Metadata | undefined>({
   },
 })
 
+const languageCompartment = new Compartment()
+
 /**
  * The parser and support extensions for each supported language,
  * which are loaded dynamically as needed.
  */
 export const language = (
-  currentDoc: CurrentDoc,
+  docName: string,
   metadata: Metadata,
   { syntaxValidation }: Options
+) => languageCompartment.of(buildExtension(docName, metadata, syntaxValidation))
+
+const buildExtension = (
+  docName: string,
+  metadata: Metadata,
+  syntaxValidation: boolean
 ) => {
   const languageDescription = LanguageDescription.matchFilename(
     languages,
-    currentDoc.docName
+    docName
   )
 
   if (!languageDescription) {
@@ -86,6 +102,18 @@ export const language = (
     }),
     metadataState,
   ]
+}
+
+export const setLanguage = (
+  docName: string,
+  metadata: Metadata,
+  syntaxValidation: boolean
+) => {
+  return {
+    effects: languageCompartment.reconfigure(
+      buildExtension(docName, metadata, syntaxValidation)
+    ),
+  }
 }
 
 export const setMetadataEffect = StateEffect.define<Metadata>()

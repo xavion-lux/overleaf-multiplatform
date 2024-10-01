@@ -1,32 +1,19 @@
-const { callbackify, promisify } = require('util')
+const { callbackify } = require('util')
 const { ProjectInvite } = require('../../models/ProjectInvite')
 const logger = require('@overleaf/logger')
 const CollaboratorsEmailHandler = require('./CollaboratorsEmailHandler')
 const CollaboratorsHandler = require('./CollaboratorsHandler')
+const CollaboratorsInviteHelper = require('./CollaboratorsInviteHelper')
 const UserGetter = require('../User/UserGetter')
 const ProjectGetter = require('../Project/ProjectGetter')
-const Crypto = require('crypto')
 const NotificationsBuilder = require('../Notifications/NotificationsBuilder')
-
-const randomBytes = promisify(Crypto.randomBytes)
+const PrivilegeLevels = require('../Authorization/PrivilegeLevels')
+const SplitTestHandler = require('../SplitTests/SplitTestHandler')
+const LimitationsManager = require('../Subscription/LimitationsManager')
+const ProjectAuditLogHandler = require('../Project/ProjectAuditLogHandler')
+const _ = require('lodash')
 
 const CollaboratorsInviteHandler = {
-  async getAllInvites(projectId) {
-    logger.debug({ projectId }, 'fetching invites for project')
-    const invites = await ProjectInvite.find({ projectId }).exec()
-    logger.debug(
-      { projectId, count: invites.length },
-      'found invites for project'
-    )
-    return invites
-  },
-
-  async getInviteCount(projectId) {
-    logger.debug({ projectId }, 'counting invites for project')
-    const count = await ProjectInvite.countDocuments({ projectId }).exec()
-    return count
-  },
-
   async _trySendInviteNotification(projectId, sendingUser, invite) {
     const { email } = invite
     const existingUser = await UserGetter.promises.getUserByAnyEmail(email, {
@@ -81,27 +68,27 @@ const CollaboratorsInviteHandler = {
       { projectId, sendingUserId: sendingUser._id, email, privileges },
       'adding invite'
     )
-    const buffer = await randomBytes(24)
-    const token = buffer.toString('hex')
+    const token = CollaboratorsInviteHelper.generateToken()
+    const tokenHmac = CollaboratorsInviteHelper.hashInviteToken(token)
     let invite = new ProjectInvite({
       email,
-      token,
+      tokenHmac,
       sendingUserId: sendingUser._id,
       projectId,
       privileges,
     })
     invite = await invite.save()
+    invite = invite.toObject()
 
     // Send email and notification in background
-    CollaboratorsInviteHandler._sendMessages(
-      projectId,
-      sendingUser,
-      invite
-    ).catch(err => {
+    CollaboratorsInviteHandler._sendMessages(projectId, sendingUser, {
+      ...invite,
+      token,
+    }).catch(err => {
       logger.err({ err, projectId, email }, 'error sending messages for invite')
     })
 
-    return invite
+    return _.pick(invite, ['_id', 'email', 'privileges'])
   },
 
   async revokeInvite(projectId, inviteId) {
@@ -121,48 +108,63 @@ const CollaboratorsInviteHandler = {
     return invite
   },
 
-  async resendInvite(projectId, sendingUser, inviteId) {
-    logger.debug({ projectId, inviteId }, 'resending invite email')
-    const invite = await ProjectInvite.findOne({
-      _id: inviteId,
-      projectId,
-    }).exec()
+  async generateNewInvite(projectId, sendingUser, inviteId) {
+    logger.debug({ projectId, inviteId }, 'generating new invite email')
+    const invite = await this.revokeInvite(projectId, inviteId)
 
     if (invite == null) {
-      logger.warn({ projectId, inviteId }, 'no invite found, nothing to resend')
+      logger.warn(
+        { projectId, inviteId },
+        'no invite found, nothing to generate'
+      )
       return null
     }
 
-    await CollaboratorsInviteHandler._sendMessages(
+    return await this.inviteToProject(
       projectId,
       sendingUser,
-      invite
+      invite.email,
+      invite.privileges
     )
-
-    return invite
-  },
-
-  async getInviteByToken(projectId, tokenString) {
-    logger.debug({ projectId }, 'fetching invite by token')
-    const invite = await ProjectInvite.findOne({
-      projectId,
-      token: tokenString,
-    }).exec()
-
-    if (invite == null) {
-      logger.err({ projectId }, 'no invite found')
-      return null
-    }
-
-    return invite
   },
 
   async acceptInvite(invite, projectId, user) {
-    CollaboratorsHandler.promises.addUserIdToProject(
+    const project = await ProjectGetter.promises.getProject(projectId, {
+      owner_ref: 1,
+    })
+    const linkSharingEnforcement =
+      await SplitTestHandler.promises.getAssignmentForUser(
+        project.owner_ref,
+        'link-sharing-enforcement'
+      )
+    const pendingEditor =
+      invite.privileges === PrivilegeLevels.READ_AND_WRITE &&
+      linkSharingEnforcement?.variant === 'active' &&
+      !(await LimitationsManager.promises.canAcceptEditCollaboratorInvite(
+        project._id
+      ))
+    if (pendingEditor) {
+      logger.debug(
+        { projectId, userId: user._id },
+        'no collaborator slots available, user added as read only (pending editor)'
+      )
+      await ProjectAuditLogHandler.promises.addEntry(
+        projectId,
+        'editor-moved-to-pending', // controller already logged accept-invite
+        null,
+        null,
+        {
+          userId: user._id.toString(),
+        }
+      )
+    }
+
+    await CollaboratorsHandler.promises.addUserIdToProject(
       projectId,
       invite.sendingUserId,
       user._id,
-      invite.privileges
+      pendingEditor ? PrivilegeLevels.READ_ONLY : invite.privileges,
+      { pendingEditor }
     )
 
     // Remove invite
@@ -182,12 +184,9 @@ const CollaboratorsInviteHandler = {
 
 module.exports = {
   promises: CollaboratorsInviteHandler,
-  getAllInvites: callbackify(CollaboratorsInviteHandler.getAllInvites),
-  getInviteCount: callbackify(CollaboratorsInviteHandler.getInviteCount),
   inviteToProject: callbackify(CollaboratorsInviteHandler.inviteToProject),
   revokeInvite: callbackify(CollaboratorsInviteHandler.revokeInvite),
-  resendInvite: callbackify(CollaboratorsInviteHandler.resendInvite),
-  getInviteByToken: callbackify(CollaboratorsInviteHandler.getInviteByToken),
+  generateNewInvite: callbackify(CollaboratorsInviteHandler.generateNewInvite),
   acceptInvite: callbackify(CollaboratorsInviteHandler.acceptInvite),
   _trySendInviteNotification: callbackify(
     CollaboratorsInviteHandler._trySendInviteNotification

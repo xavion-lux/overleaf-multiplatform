@@ -22,6 +22,8 @@ const postgresBackend = require('./postgres')
 const mongoBackend = require('./mongo')
 const logger = require('@overleaf/logger')
 
+/** @import { Readable } from 'stream' */
+
 const GLOBAL_BLOBS = new Map()
 
 function makeGlobalKey(hash) {
@@ -32,13 +34,14 @@ function makeProjectKey(projectId, hash) {
   return `${projectKey.format(projectId)}/${hash.slice(0, 2)}/${hash.slice(2)}`
 }
 
-async function uploadBlob(projectId, blob, stream) {
+async function uploadBlob(projectId, blob, stream, opts = {}) {
   const bucket = config.get('blobStore.projectBucket')
   const key = makeProjectKey(projectId, blob.getHash())
   logger.debug({ projectId, blob }, 'uploadBlob started')
   try {
     await persistor.sendStream(bucket, key, stream, {
       contentType: 'application/octet-stream',
+      ...opts,
     })
   } finally {
     logger.debug({ projectId, blob }, 'uploadBlob finished')
@@ -162,7 +165,7 @@ class BlobStore {
    * string content.
    *
    * @param {string} string
-   * @return {Promise.<Blob>}
+   * @return {Promise.<core.Blob>}
    */
   async putString(string) {
     assert.string(string, 'bad string')
@@ -185,7 +188,7 @@ class BlobStore {
    * temporary file).
    *
    * @param {string} pathname
-   * @return {Promise.<Blob>}
+   * @return {Promise.<core.Blob>}
    */
   async putFile(pathname) {
     assert.string(pathname, 'bad pathname')
@@ -205,6 +208,19 @@ class BlobStore {
   }
 
   /**
+   * Stores an object as a JSON string in a blob.
+   *
+   * @param {object} obj
+   * @returns {Promise.<core.Blob>}
+   */
+  async putObject(obj) {
+    assert.object(obj, 'bad object')
+    const string = JSON.stringify(obj)
+    return await this.putString(string)
+  }
+
+  /**
+   *
    * Fetch a blob's content by its hash as a UTF-8 encoded string.
    *
    * @param {string} hash hexadecimal SHA-1 hash
@@ -225,13 +241,41 @@ class BlobStore {
   }
 
   /**
+   * Fetch a JSON encoded blob by its hash and deserialize it.
+   *
+   * @template [T=unknown]
+   * @param {string} hash hexadecimal SHA-1 hash
+   * @return {Promise.<T>} promise for the content of the file
+   */
+  async getObject(hash) {
+    assert.blobHash(hash, 'bad hash')
+    const projectId = this.projectId
+    logger.debug({ projectId, hash }, 'getObject started')
+    try {
+      const jsonString = await this.getString(hash)
+      const object = JSON.parse(jsonString)
+      return object
+    } catch (error) {
+      // Maybe this is blob is gzipped. Try to gunzip it.
+      // TODO: Remove once we've ensured this is not reached
+      const stream = await this.getStream(hash)
+      const buffer = await streams.gunzipStreamToBuffer(stream)
+      const object = JSON.parse(buffer.toString())
+      logger.warn('getObject: Gzipped object in BlobStore')
+      return object
+    } finally {
+      logger.debug({ projectId, hash }, 'getObject finished')
+    }
+  }
+
+  /**
    * Fetch a blob by its hash as a stream.
    *
    * Note that, according to the AWS SDK docs, this does not retry after initial
    * failure, so the caller must be prepared to retry on errors, if appropriate.
    *
    * @param {string} hash hexadecimal SHA-1 hash
-   * @return {stream} a stream to read the file
+   * @return {Promise.<Readable>} a stream to read the file
    */
   async getStream(hash) {
     assert.blobHash(hash, 'bad hash')
@@ -252,7 +296,7 @@ class BlobStore {
    * Read a blob metadata record by hexadecimal hash.
    *
    * @param {string} hash hexadecimal SHA-1 hash
-   * @return {Promise.<Blob?>}
+   * @return {Promise<core.Blob | null>}
    */
   async getBlob(hash) {
     assert.blobHash(hash, 'bad hash')

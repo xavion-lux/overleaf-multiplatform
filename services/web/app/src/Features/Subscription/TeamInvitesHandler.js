@@ -3,7 +3,7 @@ const crypto = require('crypto')
 
 const settings = require('@overleaf/settings')
 const Modules = require('../../infrastructure/Modules')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 
 const { Subscription } = require('../../models/Subscription')
 const { SSOConfig } = require('../../models/SSOConfig')
@@ -80,7 +80,9 @@ async function acceptInvite(token, userId) {
     )
   }
   if (subscription.ssoConfig) {
-    const ssoConfig = await SSOConfig.findById(subscription.ssoConfig)
+    const ssoConfig = await SSOConfig.findById(
+      subscription.ssoConfig._id || subscription.ssoConfig
+    )
     if (ssoConfig?.enabled) {
       await Modules.promises.hooks.fire(
         'scheduleGroupSSOReminder',
@@ -122,9 +124,8 @@ async function revokeInvite(teamManagerId, subscription, email) {
 // email is in Subscription.invited_emails when they join. We'll remove this
 // after a short while.
 async function createTeamInvitesForLegacyInvitedEmail(email) {
-  const teams = await SubscriptionLocator.promises.getGroupsWithEmailInvite(
-    email
-  )
+  const teams =
+    await SubscriptionLocator.promises.getGroupsWithEmailInvite(email)
   return Promise.all(
     teams.map(team => createInvite(team.admin_id, team, email))
   )
@@ -152,6 +153,26 @@ async function _createInvite(subscription, email, inviter) {
 
     // legacy: remove any invite that might have been created in the past
     await _removeInviteFromTeam(subscription._id, email)
+
+    try {
+      if (subscription.ssoConfig) {
+        const ssoConfig = await SSOConfig.findById(
+          subscription.ssoConfig._id || subscription.ssoConfig
+        )
+        if (ssoConfig?.enabled) {
+          await Modules.promises.hooks.fire(
+            'sendGroupSSOReminder',
+            inviter._id,
+            subscription._id
+          )
+        }
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, userId: inviter._id, subscriptionId: subscription._id },
+        'Failed to schedule Group SSO invite for group admin'
+      )
+    }
 
     return {
       email: inviter.email,

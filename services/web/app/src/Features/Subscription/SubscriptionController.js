@@ -7,7 +7,6 @@ const Settings = require('@overleaf/settings')
 const logger = require('@overleaf/logger')
 const GeoIpLookup = require('../../infrastructure/GeoIpLookup')
 const FeaturesUpdater = require('./FeaturesUpdater')
-const planFeatures = require('./planFeatures')
 const plansConfig = require('./plansConfig')
 const interstitialPaymentConfig = require('./interstitialPaymentConfig')
 const GroupPlansData = require('./GroupPlansData')
@@ -21,6 +20,9 @@ const SubscriptionHelper = require('./SubscriptionHelper')
 const AuthorizationManager = require('../Authorization/AuthorizationManager')
 const Modules = require('../../infrastructure/Modules')
 const async = require('async')
+const { formatCurrencyLocalized } = require('../../util/currency')
+const SubscriptionFormatters = require('./SubscriptionFormatters')
+const { URLSearchParams } = require('url')
 
 const groupPlanModalOptions = Settings.groupPlanModalOptions
 const validGroupPlanModalOptions = {
@@ -30,24 +32,7 @@ const validGroupPlanModalOptions = {
   usage: groupPlanModalOptions.usages.map(item => item.code),
 }
 
-async function plansPage(req, res) {
-  const plans = SubscriptionViewModelBuilder.buildPlansList()
-
-  let currency = null
-  const queryCurrency = req.query.currency?.toUpperCase()
-  if (GeoIpLookup.isValidCurrencyParam(queryCurrency)) {
-    currency = queryCurrency
-  }
-  const {
-    recommendedCurrency,
-    countryCode,
-    geoPricingINRTestVariant,
-    geoPricingLATAMTestVariant,
-  } = await _getRecommendedCurrency(req, res)
-  if (recommendedCurrency && currency == null) {
-    currency = recommendedCurrency
-  }
-
+function _getGroupPlanModalDefaults(req, currency) {
   function getDefault(param, category, defaultValue) {
     const v = req.query && req.query[param]
     if (v && validGroupPlanModalOptions[category].includes(v)) {
@@ -56,86 +41,80 @@ async function plansPage(req, res) {
     return defaultValue
   }
 
-  const currentView = 'annual'
-
   let defaultGroupPlanModalCurrency = 'USD'
   if (validGroupPlanModalOptions.currency.includes(currency)) {
     defaultGroupPlanModalCurrency = currency
   }
-  const groupPlanModalDefaults = {
+
+  return {
     plan_code: getDefault('plan', 'plan_code', 'collaborator'),
     size: getDefault('number', 'size', '2'),
     currency: getDefault('currency', 'currency', defaultGroupPlanModalCurrency),
     usage: getDefault('usage', 'usage', 'enterprise'),
   }
+}
 
-  let showInrGeoBanner, inrGeoBannerSplitTestName
-  let inrGeoBannerVariant = 'default'
-  if (countryCode === 'IN') {
-    inrGeoBannerSplitTestName =
-      geoPricingINRTestVariant === 'inr'
-        ? 'geo-banners-inr-2'
-        : 'geo-banners-inr-1'
-    try {
-      const geoBannerAssignment = await SplitTestHandler.promises.getAssignment(
-        req,
-        res,
-        inrGeoBannerSplitTestName
+function _plansBanners({ geoPricingLATAMTestVariant, countryCode }) {
+  const showLATAMBanner =
+    geoPricingLATAMTestVariant === 'latam' &&
+    ['MX', 'CO', 'CL', 'PE'].includes(countryCode)
+  const showInrGeoBanner = countryCode === 'IN'
+  const showBrlGeoBanner = countryCode === 'BR'
+  return { showLATAMBanner, showInrGeoBanner, showBrlGeoBanner }
+}
+
+async function plansPage(req, res) {
+  const websiteRedesignPlansAssignment =
+    await SplitTestHandler.promises.getAssignment(
+      req,
+      res,
+      'website-redesign-plans'
+    )
+  if (websiteRedesignPlansAssignment.variant !== 'default') {
+    const queryParamString = new URLSearchParams(req.query)?.toString()
+    const queryParamForRedirect = queryParamString ? '?' + queryParamString : ''
+
+    if (websiteRedesignPlansAssignment.variant === 'new-design') {
+      return res.redirect(
+        302,
+        '/user/subscription/plans-2' + queryParamForRedirect
       )
-      inrGeoBannerVariant = geoBannerAssignment.variant
-      if (inrGeoBannerVariant !== 'default') {
-        showInrGeoBanner = true
-      }
-    } catch (error) {
-      logger.error(
-        { err: error },
-        `Failed to get INR geo banner lookup or assignment (${inrGeoBannerSplitTestName})`
+    } else if (websiteRedesignPlansAssignment.variant === 'light-design') {
+      return res.redirect(
+        302,
+        '/user/subscription/plans-3' + queryParamForRedirect
       )
     }
   }
 
-  // annual plans with the free trial option split test - nudge variant
-  let annualTrialsAssignment = { variant: 'default' }
+  const language = req.i18n.language || 'en'
 
-  try {
-    annualTrialsAssignment = await SplitTestHandler.promises.getAssignment(
-      req,
-      res,
-      'annual-trials'
-    )
-  } catch (error) {
-    logger.error(
-      { err: error },
-      'failed to get "annualTrialsAssignment" split test assignment'
-    )
-  }
+  const plans = SubscriptionViewModelBuilder.buildPlansList()
 
-  const websiteRedesignVariant =
-    res.locals.splitTestVariants?.['website-redesign']
+  const { currency, countryCode, geoPricingLATAMTestVariant } =
+    await _getRecommendedCurrency(req, res)
 
-  const plansPageViewSegmentation = {
-    currency: recommendedCurrency,
-    countryCode,
-    'geo-pricing-inr-group': geoPricingINRTestVariant,
-    'geo-pricing-inr-page': currency === 'INR' ? 'inr' : 'default',
-    'geo-pricing-latam-group': geoPricingLATAMTestVariant,
-    'geo-pricing-latam-page': ['BRL', 'MXN', 'COP', 'CLP', 'PEN'].includes(
-      currency
-    )
-      ? 'latam'
-      : 'default',
-    'annual-trials': annualTrialsAssignment.variant,
-    'website-redesign': websiteRedesignVariant,
-  }
-  if (inrGeoBannerSplitTestName) {
-    plansPageViewSegmentation[inrGeoBannerSplitTestName] = inrGeoBannerVariant
-  }
+  const latamCountryBannerDetails = await getLatamCountryBannerDetails(req, res)
+  const groupPlanModalDefaults = _getGroupPlanModalDefaults(req, currency)
 
-  AnalyticsManager.recordEventForSession(
-    req.session,
-    'plans-page-view',
-    plansPageViewSegmentation
+  const currentView = 'annual'
+
+  const { showLATAMBanner, showInrGeoBanner, showBrlGeoBanner } = _plansBanners(
+    {
+      geoPricingLATAMTestVariant,
+      countryCode,
+    }
   )
+
+  const localCcyAssignment = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'local-ccy-format-v2'
+  )
+  const formatCurrency =
+    localCcyAssignment.variant === 'enabled'
+      ? formatCurrencyLocalized
+      : SubscriptionHelper.formatCurrencyDefault
 
   res.render('subscriptions/plans', {
     title: 'plans_and_pricing',
@@ -144,16 +123,89 @@ async function plansPage(req, res) {
     itm_content: req.query?.itm_content,
     itm_referrer: req.query?.itm_referrer,
     itm_campaign: 'plans',
+    language,
+    formatCurrency,
     recommendedCurrency: currency,
-    planFeatures,
     plansConfig,
     groupPlans: GroupPlansData,
     groupPlanModalOptions,
     groupPlanModalDefaults,
     initialLocalizedGroupPrice:
-      SubscriptionHelper.generateInitialLocalizedGroupPrice(currency),
+      SubscriptionHelper.generateInitialLocalizedGroupPrice(
+        currency ?? 'USD',
+        language,
+        formatCurrency
+      ),
     showInrGeoBanner,
-    annualTrialsAssignment: annualTrialsAssignment?.variant,
+    showBrlGeoBanner,
+    showLATAMBanner,
+    latamCountryBannerDetails,
+    countryCode,
+    websiteRedesignPlansVariant: 'default',
+  })
+}
+
+async function plansPageLightDesign(req, res) {
+  const splitTestActive = await SplitTestHandler.promises.isSplitTestActive(
+    'website-redesign-plans'
+  )
+
+  if (!splitTestActive && req.query.preview !== 'true') {
+    return res.redirect(302, '/user/subscription/plans')
+  }
+  const { currency, countryCode, geoPricingLATAMTestVariant } =
+    await _getRecommendedCurrency(req, res)
+
+  const language = req.i18n.language || 'en'
+  const currentView = 'annual'
+  const plans = SubscriptionViewModelBuilder.buildPlansList()
+  const groupPlanModalDefaults = _getGroupPlanModalDefaults(req, currency)
+
+  const localCcyAssignment = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'local-ccy-format-v2'
+  )
+  const formatCurrency =
+    localCcyAssignment.variant === 'enabled'
+      ? formatCurrencyLocalized
+      : SubscriptionHelper.formatCurrencyDefault
+
+  const { showLATAMBanner, showInrGeoBanner, showBrlGeoBanner } = _plansBanners(
+    {
+      geoPricingLATAMTestVariant,
+      countryCode,
+    }
+  )
+
+  const latamCountryBannerDetails = await getLatamCountryBannerDetails(req, res)
+
+  res.render('subscriptions/plans-light-design', {
+    title: 'plans_and_pricing',
+    currentView,
+    plans,
+    itm_content: req.query?.itm_content,
+    itm_referrer: req.query?.itm_referrer,
+    itm_campaign: 'plans',
+    language,
+    formatCurrency,
+    recommendedCurrency: currency,
+    plansConfig,
+    groupPlans: GroupPlansData,
+    groupPlanModalOptions,
+    groupPlanModalDefaults,
+    initialLocalizedGroupPrice:
+      SubscriptionHelper.generateInitialLocalizedGroupPrice(
+        currency ?? 'USD',
+        language,
+        formatCurrency
+      ),
+    showLATAMBanner,
+    showInrGeoBanner,
+    showBrlGeoBanner,
+    latamCountryBannerDetails,
+    countryCode,
+    websiteRedesignPlansVariant: 'light-design',
   })
 }
 
@@ -173,9 +225,29 @@ function formatGroupPlansDataForDash() {
  */
 async function userSubscriptionPage(req, res) {
   const user = SessionManager.getSessionUser(req.session)
+
+  const localCcyAssignment = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'local-ccy-format-v2'
+  )
+  await SplitTestHandler.promises.getAssignment(req, res, 'ai-add-on')
+
+  // Populates splitTestVariants with a value for the split test name and allows
+  // Pug to read it
+  await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'bootstrap-5-subscription'
+  )
+
   const results =
     await SubscriptionViewModelBuilder.promises.buildUsersSubscriptionViewModel(
-      user
+      user,
+      req.i18n.language,
+      localCcyAssignment.variant === 'enabled'
+        ? SubscriptionFormatters.formatPriceLocalized
+        : SubscriptionFormatters.formatPriceDefault
     )
   const {
     personalSubscription,
@@ -187,6 +259,10 @@ async function userSubscriptionPage(req, res) {
   } = results
   const hasSubscription =
     await LimitationsManager.promises.userHasV1OrV2Subscription(user)
+
+  const userCanExtendTrial = (
+    await Modules.promises.hooks.fire('userCanExtendTrial', user)
+  )?.[0]
   const fromPlansPage = req.query.hasSubscription
   const plansData =
     SubscriptionViewModelBuilder.buildPlansListForSubscriptionDash(
@@ -194,14 +270,6 @@ async function userSubscriptionPage(req, res) {
     )
 
   AnalyticsManager.recordEventForSession(req.session, 'subscription-page-view')
-
-  const cancelButtonAssignment = await SplitTestHandler.promises.getAssignment(
-    req,
-    res,
-    'subscription-cancel-button'
-  )
-
-  const cancelButtonNewCopy = cancelButtonAssignment?.variant === 'new-copy'
 
   const groupPlansDataForDash = formatGroupPlansDataForDash()
 
@@ -247,12 +315,12 @@ async function userSubscriptionPage(req, res) {
     hasSubscription,
     fromPlansPage,
     personalSubscription,
+    userCanExtendTrial,
     memberGroupSubscriptions,
     managedGroupSubscriptions,
     managedInstitutions,
     managedPublishers,
     currentInstitutionsWithLicence,
-    cancelButtonNewCopy,
     groupPlans: groupPlansDataForDash,
     groupSettingsEnabledFor,
     isManagedAccount: !!req.managedBy,
@@ -262,101 +330,51 @@ async function userSubscriptionPage(req, res) {
 }
 
 async function interstitialPaymentPage(req, res) {
+  const websiteRedesignPlansAssignment =
+    await SplitTestHandler.promises.getAssignment(
+      req,
+      res,
+      'website-redesign-plans'
+    )
+
+  let template = 'subscriptions/interstitial-payment'
+
+  if (websiteRedesignPlansAssignment.variant === 'new-design') {
+    return await Modules.promises.hooks.fire(
+      'interstitialPaymentPageNewDesign',
+      req,
+      res
+    )
+  } else if (websiteRedesignPlansAssignment.variant === 'light-design') {
+    template = 'subscriptions/interstitial-payment-light-design'
+  }
+
   const user = SessionManager.getSessionUser(req.session)
-  const {
-    recommendedCurrency,
-    countryCode,
-    geoPricingINRTestVariant,
-    geoPricingLATAMTestVariant,
-  } = await _getRecommendedCurrency(req, res)
+  const { recommendedCurrency, countryCode, geoPricingLATAMTestVariant } =
+    await _getRecommendedCurrency(req, res)
+
+  const latamCountryBannerDetails = await getLatamCountryBannerDetails(req, res)
 
   const hasSubscription =
     await LimitationsManager.promises.userHasV1OrV2Subscription(user)
-
   const showSkipLink = req.query?.skipLink === 'true'
 
   if (hasSubscription) {
     res.redirect('/user/subscription?hasSubscription=true')
   } else {
-    let showInrGeoBanner, inrGeoBannerSplitTestName
-    let inrGeoBannerVariant = 'default'
-    if (countryCode === 'IN') {
-      inrGeoBannerSplitTestName =
-        geoPricingINRTestVariant === 'inr'
-          ? 'geo-banners-inr-2'
-          : 'geo-banners-inr-1'
-      try {
-        const geoBannerAssignment =
-          await SplitTestHandler.promises.getAssignment(
-            req,
-            res,
-            inrGeoBannerSplitTestName
-          )
-        inrGeoBannerVariant = geoBannerAssignment.variant
-        if (inrGeoBannerVariant !== 'default') {
-          showInrGeoBanner = true
-        }
-      } catch (error) {
-        logger.error(
-          { err: error },
-          `Failed to get INR geo banner lookup or assignment (${inrGeoBannerSplitTestName})`
-        )
-      }
-    }
+    const { showLATAMBanner, showInrGeoBanner, showBrlGeoBanner } =
+      _plansBanners({
+        geoPricingLATAMTestVariant,
+        countryCode,
+      })
 
-    // annual plans with the free trial option split test - nudge variant
-    let annualTrialsAssignment = { variant: 'default' }
-
-    try {
-      annualTrialsAssignment = await SplitTestHandler.promises.getAssignment(
-        req,
-        res,
-        'annual-trials'
-      )
-    } catch (error) {
-      logger.error(
-        { err: error },
-        'failed to get "annualTrialsAssignment" split test assignment'
-      )
-    }
-
-    const paywallPlansPageViewSegmentation = {
-      currency: recommendedCurrency,
-      countryCode,
-      'geo-pricing-inr-group': geoPricingINRTestVariant,
-      'geo-pricing-inr-page': recommendedCurrency === 'INR' ? 'inr' : 'default',
-      'geo-pricing-latam-group': geoPricingLATAMTestVariant,
-      'geo-pricing-latam-page': ['BRL', 'MXN', 'COP', 'CLP', 'PEN'].includes(
-        recommendedCurrency
-      )
-        ? 'latam'
-        : 'default',
-      'annual-trials': annualTrialsAssignment.variant,
-    }
-    if (inrGeoBannerSplitTestName) {
-      paywallPlansPageViewSegmentation[inrGeoBannerSplitTestName] =
-        inrGeoBannerVariant
-    }
-    AnalyticsManager.recordEventForSession(
-      req.session,
-      'paywall-plans-page-view',
-      paywallPlansPageViewSegmentation
+    const localCcyAssignment = await SplitTestHandler.promises.getAssignment(
+      req,
+      res,
+      'local-ccy-format-v2'
     )
 
-    let templatePath
-
-    switch (annualTrialsAssignment?.variant) {
-      case 'nudge':
-        templatePath = 'subscriptions/interstitial-payment_nudge_annual'
-        break
-      case 'no-nudge':
-        templatePath = 'subscriptions/interstitial-payment_no_nudge_monthly'
-        break
-      default:
-        templatePath = 'subscriptions/interstitial-payment'
-    }
-
-    res.render(templatePath, {
+    res.render(template, {
       title: 'subscribe',
       itm_content: req.query?.itm_content,
       itm_campaign: req.query?.itm_campaign,
@@ -364,7 +382,17 @@ async function interstitialPaymentPage(req, res) {
       recommendedCurrency,
       interstitialPaymentConfig,
       showSkipLink,
+      formatCurrency:
+        localCcyAssignment.variant === 'enabled'
+          ? formatCurrencyLocalized
+          : SubscriptionHelper.formatCurrencyDefault,
+      showCurrencyAndPaymentMethods: localCcyAssignment.variant === 'enabled',
       showInrGeoBanner,
+      showBrlGeoBanner,
+      showLATAMBanner,
+      latamCountryBannerDetails,
+      skipLinkTarget: req.session?.postCheckoutRedirect || '/project',
+      websiteRedesignPlansVariant: websiteRedesignPlansAssignment.variant,
     })
   }
 }
@@ -376,9 +404,18 @@ async function interstitialPaymentPage(req, res) {
  */
 async function successfulSubscription(req, res) {
   const user = SessionManager.getSessionUser(req.session)
+  const localCcyAssignment = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'local-ccy-format-v2'
+  )
   const { personalSubscription } =
     await SubscriptionViewModelBuilder.promises.buildUsersSubscriptionViewModel(
-      user
+      user,
+      req.i18n.language,
+      localCcyAssignment.variant === 'enabled'
+        ? SubscriptionFormatters.formatPriceLocalized
+        : SubscriptionFormatters.formatPriceDefault
     )
 
   const postCheckoutRedirect = req.session?.postCheckoutRedirect
@@ -386,6 +423,12 @@ async function successfulSubscription(req, res) {
   if (!personalSubscription) {
     res.redirect('/user/subscription/plans')
   } else {
+    await SplitTestHandler.promises.getAssignment(
+      req,
+      res,
+      'bootstrap-5-subscription'
+    )
+
     res.render('subscriptions/successful-subscription-react', {
       title: 'thank_you',
       personalSubscription,
@@ -416,7 +459,12 @@ function cancelSubscription(req, res, next) {
  * @param {import('express').NextFunction} next
  * @returns {Promise<void>}
  */
-function canceledSubscription(req, res, next) {
+async function canceledSubscription(req, res, next) {
+  await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'bootstrap-5-subscription'
+  )
   return res.render('subscriptions/canceled-subscription-react', {
     title: 'subscription_canceled',
   })
@@ -562,68 +610,18 @@ function recurlyCallback(req, res, next) {
   }
 }
 
-function renderUpgradeToAnnualPlanPage(req, res, next) {
-  const user = SessionManager.getSessionUser(req.session)
-  LimitationsManager.userHasV2Subscription(
-    user,
-    function (err, hasSubscription, subscription) {
-      let planName
-      if (err) {
-        return next(err)
-      }
-      const planCode = subscription
-        ? subscription.planCode.toLowerCase()
-        : undefined
-      if ((planCode ? planCode.indexOf('annual') : undefined) !== -1) {
-        planName = 'annual'
-      } else if ((planCode ? planCode.indexOf('student') : undefined) !== -1) {
-        planName = 'student'
-      } else if (
-        (planCode ? planCode.indexOf('collaborator') : undefined) !== -1
-      ) {
-        planName = 'collaborator'
-      }
-      if (hasSubscription) {
-        res.render('subscriptions/upgradeToAnnual', {
-          title: 'Upgrade to annual',
-          planName,
-        })
-      } else {
-        res.redirect('/user/subscription/plans')
-      }
-    }
-  )
-}
-
-function processUpgradeToAnnualPlan(req, res, next) {
-  const user = SessionManager.getSessionUser(req.session)
-  const { planName } = req.body
-  const couponCode = Settings.coupon_codes.upgradeToAnnualPromo[planName]
-  const annualPlanName = `${planName}-annual`
-  logger.debug(
-    { userId: user._id, planName: annualPlanName },
-    'user is upgrading to annual billing with discount'
-  )
-  return SubscriptionHandler.updateSubscription(
-    user,
-    annualPlanName,
-    couponCode,
-    function (err) {
-      if (err) {
-        OError.tag(err, 'error updating subscription', {
-          user_id: user._id,
-        })
-        return next(err)
-      }
-      res.sendStatus(200)
-    }
-  )
-}
-
 async function extendTrial(req, res) {
   const user = SessionManager.getSessionUser(req.session)
   const { subscription } =
     await LimitationsManager.promises.userHasV2Subscription(user)
+
+  const allowed = (
+    await Modules.promises.hooks.fire('userCanExtendTrial', user)
+  )?.[0]
+  if (!allowed) {
+    logger.warn({ userId: user._id }, 'user can not extend trial')
+    return res.sendStatus(403)
+  }
 
   try {
     await SubscriptionHandler.promises.extendTrial(subscription, 14)
@@ -680,70 +678,101 @@ async function _getRecommendedCurrency(req, res) {
   }
   const currencyLookup = await GeoIpLookup.promises.getCurrencyCode(ip)
   const countryCode = currencyLookup.countryCode
-  let assignmentINR, assignmentLATAM
   let recommendedCurrency = currencyLookup.currencyCode
-  // for #12703
-  try {
-    // Split test is kept active, but all users geolocated in India can
-    // now use the INR currency (See #13507)
-    assignmentINR = await SplitTestHandler.promises.getAssignment(
-      req,
-      res,
-      'geo-pricing-inr'
-    )
-  } catch (error) {
-    logger.error(
-      { err: error },
-      'Failed to get assignment for geo-pricing-inr test'
-    )
-  }
-  // for #13559
-  try {
-    assignmentLATAM = await SplitTestHandler.promises.getAssignment(
-      req,
-      res,
-      'geo-pricing-latam'
-    )
-  } catch (error) {
-    logger.error(
-      { err: error },
-      'Failed to get assignment for geo-pricing-latam test'
-    )
-  }
+
+  const assignmentLATAM = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'geo-pricing-latam-v2'
+  )
+
   if (
-    ['BRL', 'MXN', 'COP', 'CLP', 'PEN'].includes(recommendedCurrency) &&
-    assignmentLATAM?.variant !== 'latam'
+    ['MXN', 'COP', 'CLP', 'PEN'].includes(recommendedCurrency) &&
+    assignmentLATAM?.variant === 'default'
   ) {
     recommendedCurrency = GeoIpLookup.DEFAULT_CURRENCY_CODE
   }
+
+  let currency = null
+  const queryCurrency = req.query.currency?.toUpperCase()
+  if (queryCurrency && GeoIpLookup.isValidCurrencyParam(queryCurrency)) {
+    currency = queryCurrency
+  } else if (recommendedCurrency) {
+    currency = recommendedCurrency
+  }
+
   return {
+    currency,
     recommendedCurrency,
     countryCode,
-    geoPricingINRTestVariant: assignmentINR?.variant,
     geoPricingLATAMTestVariant: assignmentLATAM?.variant,
   }
 }
 
+async function getLatamCountryBannerDetails(req, res) {
+  const userId = SessionManager.getLoggedInUserId(req.session)
+  let ip = req.ip
+  if (
+    req.query?.ip &&
+    (await AuthorizationManager.promises.isUserSiteAdmin(userId))
+  ) {
+    ip = req.query.ip
+  }
+  const currencyLookup = await GeoIpLookup.promises.getCurrencyCode(ip)
+  const countryCode = currencyLookup.countryCode
+  const latamCountryBannerDetails = {}
+
+  switch (countryCode) {
+    case `MX`:
+      latamCountryBannerDetails.latamCountryFlag = '🇲🇽'
+      latamCountryBannerDetails.country = 'Mexico'
+      latamCountryBannerDetails.discount = '25%'
+      latamCountryBannerDetails.currency = 'Mexican Pesos'
+      break
+    case `CO`:
+      latamCountryBannerDetails.latamCountryFlag = '🇨🇴'
+      latamCountryBannerDetails.country = 'Colombia'
+      latamCountryBannerDetails.discount = '60%'
+      latamCountryBannerDetails.currency = 'Colombian Pesos'
+      break
+    case `CL`:
+      latamCountryBannerDetails.latamCountryFlag = '🇨🇱'
+      latamCountryBannerDetails.country = 'Chile'
+      latamCountryBannerDetails.discount = '30%'
+      latamCountryBannerDetails.currency = 'Chilean Pesos'
+      break
+    case `PE`:
+      latamCountryBannerDetails.latamCountryFlag = '🇵🇪'
+      latamCountryBannerDetails.country = 'Peru'
+      latamCountryBannerDetails.currency = 'Peruvian Soles'
+      latamCountryBannerDetails.discount = '40%'
+      break
+  }
+
+  return latamCountryBannerDetails
+}
+
 module.exports = {
   plansPage: expressify(plansPage),
+  plansPageLightDesign: expressify(plansPageLightDesign),
   userSubscriptionPage: expressify(userSubscriptionPage),
   interstitialPaymentPage: expressify(interstitialPaymentPage),
   successfulSubscription: expressify(successfulSubscription),
   cancelSubscription,
-  canceledSubscription,
+  canceledSubscription: expressify(canceledSubscription),
   cancelV1Subscription,
   updateSubscription,
   cancelPendingSubscriptionChange,
   updateAccountEmailAddress,
   reactivateSubscription,
   recurlyCallback,
-  renderUpgradeToAnnualPlanPage,
-  processUpgradeToAnnualPlan,
   extendTrial: expressify(extendTrial),
   recurlyNotificationParser,
   refreshUserFeatures: expressify(refreshUserFeatures),
   redirectToHostedPage: expressify(redirectToHostedPage),
+  plansBanners: _plansBanners,
   promises: {
     getRecommendedCurrency: _getRecommendedCurrency,
+    getLatamCountryBannerDetails,
   },
 }

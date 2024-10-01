@@ -1,5 +1,5 @@
 const { expect } = require('chai')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const Settings = require('@overleaf/settings')
 const User = require('./helpers/User').promises
 
@@ -69,6 +69,7 @@ describe('Authentication', function () {
       expect(auditLogEntry.info).to.deep.equal({
         method: 'Password login',
         captcha: 'solved',
+        fromKnownDevice: false,
       })
       expect(auditLogEntry.ipAddress).to.equal('127.0.0.1')
     })
@@ -101,8 +102,50 @@ describe('Authentication', function () {
       expect(auditLogEntry.operation).to.equal('failed-password-match')
       expect(auditLogEntry.info).to.deep.equal({
         method: 'Password login',
+        fromKnownDevice: true,
       })
       expect(auditLogEntry.ipAddress).to.equal('127.0.0.1')
+    })
+  })
+
+  describe('rate-limit', function () {
+    beforeEach('fetchCsrfToken', async function () {
+      await user.login()
+      await user.logout()
+      await user.getCsrfToken()
+    })
+    const tryLogin = async (i = 0) => {
+      const {
+        response: { statusCode },
+      } = await user.doRequest('POST', {
+        url: Settings.enableLegacyLogin ? '/login/legacy' : '/login',
+        json: {
+          email: `${user.email}${' '.repeat(i)}`,
+          password: 'wrong-password',
+          'g-recaptcha-response': 'valid',
+        },
+      })
+      return statusCode
+    }
+    it('should return 429 after 10 unsuccessful login attempts', async function () {
+      for (let i = 0; i < 10; i++) {
+        const statusCode = await tryLogin()
+        expect(statusCode).to.equal(401)
+      }
+      for (let i = 0; i < 10; i++) {
+        const statusCode = await tryLogin()
+        expect(statusCode).to.equal(429)
+      }
+    })
+    it('ignore extra spaces in email address', async function () {
+      for (let i = 0; i < 10; i++) {
+        const statusCode = await tryLogin(i)
+        expect(statusCode).to.equal(401)
+      }
+      for (let i = 0; i < 10; i++) {
+        const statusCode = await tryLogin(i)
+        expect(statusCode).to.equal(429)
+      }
     })
   })
 })

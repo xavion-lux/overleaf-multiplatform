@@ -6,16 +6,7 @@ const async = require('async')
 const logger = require('@overleaf/logger')
 const Metrics = require('./Metrics')
 const Errors = require('./Errors')
-
-module.exports = {
-  flushProjectWithLocks,
-  flushAndDeleteProjectWithLocks,
-  queueFlushAndDeleteProject,
-  getProjectDocsTimestamps,
-  getProjectDocsAndFlushIfOld,
-  clearProjectState,
-  updateProjectWithLocks,
-}
+const { promisifyAll } = require('@overleaf/promise-utils')
 
 function flushProjectWithLocks(projectId, _callback) {
   const timer = new Metrics.Timer('projectManager.flushProjectWithLocks')
@@ -158,7 +149,7 @@ function getProjectDocsAndFlushIfOld(
       // we can't return docs if project structure has changed
       if (projectStateChanged) {
         return callback(
-          Errors.ProjectStateChangedError('project state changed')
+          new Errors.ProjectStateChangedError('project state changed')
         )
       }
       // project structure hasn't changed, return doc content from redis
@@ -336,3 +327,15 @@ function updateProjectWithLocks(
     callback()
   })
 }
+
+module.exports = {
+  flushProjectWithLocks,
+  flushAndDeleteProjectWithLocks,
+  queueFlushAndDeleteProject,
+  getProjectDocsTimestamps,
+  getProjectDocsAndFlushIfOld,
+  clearProjectState,
+  updateProjectWithLocks,
+}
+
+module.exports.promises = promisifyAll(module.exports)

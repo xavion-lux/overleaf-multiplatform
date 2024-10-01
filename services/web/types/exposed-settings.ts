@@ -42,6 +42,10 @@ export type ExposedSettings = {
   textExtensions: string[]
   editableFilenames: string[]
   validRootDocExtensions: string[]
+  fileIgnorePattern: string
   templateLinks?: TemplateLink[]
   labsEnabled: boolean
+  groupSSOEnabled?: boolean
+  wikiEnabled?: boolean
+  templatesEnabled?: boolean
 }

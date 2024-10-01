@@ -1,7 +1,7 @@
 const SandboxedModule = require('sandboxed-module')
 const { expect } = require('chai')
 const sinon = require('sinon')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 
 const MODULE_PATH = '../../../../app/src/Features/Tutorial/TutorialHandler'
 
@@ -39,6 +39,10 @@ describe('TutorialHandler', function () {
         '../User/UserUpdater': this.UserUpdater,
       },
     })
+  })
+
+  afterEach(function () {
+    this.clock.restore()
   })
 
   describe('getInactiveTutorials', function () {

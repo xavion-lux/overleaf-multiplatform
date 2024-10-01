@@ -1,27 +1,21 @@
 import classNames from 'classnames'
 import React from 'react'
+import { bsVersion } from '@/features/utils/bootstrap-5'
 
-type IconOwnProps = {
+type IconProps = React.ComponentProps<'i'> & {
   type: string
-  category?: 'rounded' | 'outlined'
   accessibilityLabel?: string
+  modifier?: string
 }
-
-type IconProps = IconOwnProps &
-  Omit<React.ComponentProps<'i'>, keyof IconOwnProps>
 
 function MaterialIcon({
   type,
-  category = 'rounded',
   className,
   accessibilityLabel,
+  modifier,
   ...rest
 }: IconProps) {
-  const iconClassName = classNames(
-    'material-symbols',
-    `material-symbols-${category}`,
-    className
-  )
+  const iconClassName = classNames('material-symbols', className, modifier)
 
   return (
     <>
@@ -29,7 +23,9 @@ function MaterialIcon({
         {type}
       </span>
       {accessibilityLabel && (
-        <span className="sr-only">{accessibilityLabel}</span>
+        <span className={bsVersion({ bs5: 'visually-hidden', bs3: 'sr-only' })}>
+          {accessibilityLabel}
+        </span>
       )}
     </>
   )

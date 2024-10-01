@@ -26,6 +26,10 @@ const rateLimiters = {
     points: 200,
     duration: 60 * 10,
   }),
+  viewProjectInvite: new RateLimiter('view-project-invite', {
+    points: 20,
+    duration: 60,
+  }),
 }
 
 module.exports = {
@@ -64,7 +68,8 @@ module.exports = {
     webRouter.get(
       '/project/:Project_id/members',
       AuthenticationController.requireLogin(),
-      AuthorizationMiddleware.ensureUserCanAdminProject,
+      AuthorizationMiddleware.blockRestrictedUserFromProject,
+      AuthorizationMiddleware.ensureUserCanReadProject,
       CollaboratorsController.getAllMembers
     )
 
@@ -119,7 +124,7 @@ module.exports = {
       }),
       AuthenticationController.requireLogin(),
       AuthorizationMiddleware.ensureUserCanAdminProject,
-      CollaboratorsInviteController.resendInvite
+      CollaboratorsInviteController.generateNewInvite
     )
 
     webRouter.get(
@@ -128,7 +133,7 @@ module.exports = {
         'collaboration',
         'project-invite'
       ),
-      AuthenticationController.requireLogin(),
+      RateLimiterMiddleware.rateLimit(rateLimiters.viewProjectInvite),
       CollaboratorsInviteController.viewInvite,
       AnalyticsRegistrationSourceMiddleware.clearSource()
     )

@@ -3,7 +3,10 @@ const {
   promisifyAll,
   promisifyClass,
   callbackifyMultiResult,
+  callbackifyClass,
   callbackifyAll,
+  expressify,
+  expressifyErrorHandler,
 } = require('../..')
 
 describe('promisifyAll', function () {
@@ -293,6 +296,156 @@ describe('callbackifyAll', function () {
         expect(sum).to.equal(95)
         done()
       })
+    })
+  })
+
+  describe('without option', function () {
+    before(function () {
+      this.module = {
+        async asyncAdd(a, b) {
+          return a + b
+        },
+        async asyncArithmetic(a, b) {
+          return { sum: a + b, product: a * b }
+        },
+      }
+      this.callbackified = callbackifyAll(this.module, {
+        without: ['asyncAdd'],
+      })
+    })
+
+    it('does not callbackify excluded functions', function () {
+      expect(this.callbackified.asyncAdd).not.to.exist
+    })
+
+    it('callbackifies other functions', async function () {
+      this.callbackified.asyncArithmetic(5, 6, (err, { sum, product }) => {
+        expect(err).not.to.exist
+        expect(sum).to.equal(11)
+        expect(product).to.equal(30)
+      })
+    })
+  })
+})
+
+describe('callbackifyClass', function () {
+  describe('basic functionality', function () {
+    before(function () {
+      this.Class = class {
+        constructor(a) {
+          this.a = a
+        }
+
+        async asyncAdd(b) {
+          return this.a + b
+        }
+      }
+      this.Callbackified = callbackifyClass(this.Class)
+    })
+
+    it('callbackifies the class methods', function (done) {
+      const adder = new this.Callbackified(1)
+      adder.asyncAdd(2, (err, sum) => {
+        expect(err).not.to.exist
+        expect(sum).to.equal(3)
+        done()
+      })
+    })
+  })
+
+  describe('without option', function () {
+    before(function () {
+      this.Class = class {
+        constructor(a) {
+          this.a = a
+        }
+
+        async asyncAdd(b) {
+          return this.a + b
+        }
+
+        syncAdd(b) {
+          return this.a + b
+        }
+      }
+      this.Callbackified = callbackifyClass(this.Class, {
+        without: ['syncAdd'],
+      })
+    })
+
+    it('does not callbackify excluded functions', function () {
+      const adder = new this.Callbackified(10)
+      const sum = adder.syncAdd(12)
+      expect(sum).to.equal(22)
+    })
+
+    it('callbackifies other functions', function (done) {
+      const adder = new this.Callbackified(1)
+      adder.asyncAdd(2, (err, sum) => {
+        expect(err).not.to.exist
+        expect(sum).to.equal(3)
+        done()
+      })
+    })
+  })
+
+  describe('multiResult option', function () {
+    before(function () {
+      this.Class = class {
+        constructor(a) {
+          this.a = a
+        }
+
+        async asyncAdd(b) {
+          return this.a + b
+        }
+
+        async asyncArithmetic(b) {
+          return { sum: this.a + b, product: this.a * b }
+        }
+      }
+      this.Callbackified = callbackifyClass(this.Class, {
+        multiResult: { asyncArithmetic: ['sum', 'product'] },
+      })
+    })
+
+    it('callbackifies multi-result functions', function (done) {
+      const adder = new this.Callbackified(3)
+      adder.asyncArithmetic(6, (err, sum, product) => {
+        expect(err).not.to.exist
+        expect(sum).to.equal(9)
+        expect(product).to.equal(18)
+        done()
+      })
+    })
+
+    it('callbackifies other functions normally', function (done) {
+      const adder = new this.Callbackified(6)
+      adder.asyncAdd(2, (err, sum) => {
+        expect(err).not.to.exist
+        expect(sum).to.equal(8)
+        done()
+      })
+    })
+  })
+})
+
+describe('expressify', function () {
+  it('should propagate any rejection to the "next" callback', function (done) {
+    const fn = () => Promise.reject(new Error('rejected'))
+    expressify(fn)({}, {}, error => {
+      expect(error.message).to.equal('rejected')
+      done()
+    })
+  })
+})
+
+describe('expressifyErrorHandler', function () {
+  it('should propagate any rejection to the "next" callback', function (done) {
+    const fn = () => Promise.reject(new Error('rejected'))
+    expressifyErrorHandler(fn)({}, {}, {}, error => {
+      expect(error.message).to.equal('rejected')
+      done()
     })
   })
 })

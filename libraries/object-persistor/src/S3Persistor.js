@@ -7,6 +7,7 @@ if (https.globalAgent.maxSockets < 300) {
   https.globalAgent.maxSockets = 300
 }
 
+const Metrics = require('@overleaf/metrics')
 const AbstractPersistor = require('./AbstractPersistor')
 const PersistorHelper = require('./PersistorHelper')
 
@@ -14,12 +15,7 @@ const { pipeline, PassThrough } = require('stream')
 const fs = require('fs')
 const S3 = require('aws-sdk/clients/s3')
 const { URL } = require('url')
-const {
-  WriteError,
-  ReadError,
-  NotFoundError,
-  SettingsError,
-} = require('./Errors')
+const { WriteError, ReadError, NotFoundError } = require('./Errors')
 
 module.exports = class S3Persistor extends AbstractPersistor {
   constructor(settings = {}) {
@@ -29,15 +25,14 @@ module.exports = class S3Persistor extends AbstractPersistor {
   }
 
   async sendFile(bucketName, key, fsPath) {
-    return this.sendStream(bucketName, key, fs.createReadStream(fsPath))
+    return await this.sendStream(bucketName, key, fs.createReadStream(fsPath))
   }
 
   async sendStream(bucketName, key, readStream, opts = {}) {
     try {
-      // egress from us to S3
       const observeOptions = {
-        metric: 's3.egress',
-        Metrics: this.settings.Metrics,
+        metric: 's3.egress', // egress from us to S3
+        bucket: bucketName,
       }
 
       const observer = new PersistorHelper.ObserverStream(observeOptions)
@@ -90,6 +85,10 @@ module.exports = class S3Persistor extends AbstractPersistor {
     if (opts.start != null && opts.end != null) {
       params.Range = `bytes=${opts.start}-${opts.end}`
     }
+    const observer = new PersistorHelper.ObserverStream({
+      metric: 's3.ingress', // ingress from S3 to us
+      bucket: bucketName,
+    })
 
     const req = this._getClientForBucket(bucketName).getObject(params)
     const stream = req.createReadStream()
@@ -121,13 +120,7 @@ module.exports = class S3Persistor extends AbstractPersistor {
         ReadError
       )
     }
-
-    // ingress from S3 to us
-    const observer = new PersistorHelper.ObserverStream({
-      metric: 's3.ingress',
-      Metrics: this.settings.Metrics,
-    })
-
+    // Return a PassThrough stream with a minimal interface. It will buffer until the caller starts reading. It will emit errors from the source stream (Stream.pipeline passes errors along).
     const pass = new PassThrough()
     pipeline(stream, observer, pass, err => {
       if (err) req.abort()
@@ -233,10 +226,8 @@ module.exports = class S3Persistor extends AbstractPersistor {
         return md5
       }
       // etag is not in md5 format
-      if (this.settings.Metrics) {
-        this.settings.Metrics.inc('s3.md5Download')
-      }
-      return PersistorHelper.calculateStreamMd5(
+      Metrics.inc('s3.md5Download')
+      return await PersistorHelper.calculateStreamMd5(
         await this.getObjectStream(bucketName, key)
       )
     } catch (err) {
@@ -336,23 +327,11 @@ module.exports = class S3Persistor extends AbstractPersistor {
   }
 
   _getClientForBucket(bucket, clientOptions) {
-    if (this.settings.bucketCreds && this.settings.bucketCreds[bucket]) {
-      return new S3(
-        this._buildClientOptions(
-          this.settings.bucketCreds[bucket],
-          clientOptions
-        )
+    return new S3(
+      this._buildClientOptions(
+        this.settings.bucketCreds?.[bucket],
+        clientOptions
       )
-    }
-
-    // no specific credentials for the bucket
-    if (this.settings.key) {
-      return new S3(this._buildClientOptions(null, clientOptions))
-    }
-
-    throw new SettingsError(
-      'no bucket-specific or default credentials provided',
-      { bucket }
     )
   }
 
@@ -364,11 +343,14 @@ module.exports = class S3Persistor extends AbstractPersistor {
         accessKeyId: bucketCredentials.auth_key,
         secretAccessKey: bucketCredentials.auth_secret,
       }
-    } else {
+    } else if (this.settings.key) {
       options.credentials = {
         accessKeyId: this.settings.key,
         secretAccessKey: this.settings.secret,
       }
+    } else {
+      // Use the default credentials provider (process.env -> SSP -> ini -> IAM)
+      // Docs: https://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/CredentialProviderChain.html#defaultProviders-property
     }
 
     if (this.settings.endpoint) {

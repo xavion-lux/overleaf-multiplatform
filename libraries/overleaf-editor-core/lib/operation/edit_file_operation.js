@@ -1,20 +1,26 @@
+// @ts-check
 'use strict'
+/**
+ * @import EditOperation from './edit_operation'
+ * @import { RawEditFileOperation } from '../types'
+ * @import Snapshot from "../snapshot"
+ */
 
 const Operation = require('./')
-const TextOperation = require('./text_operation')
+const EditOperationBuilder = require('./edit_operation_builder')
 
 /**
- * Edit a file in place. It is a wrapper around a single TextOperation.
+ * Edit a file in place. It is a wrapper around a single EditOperation.
  */
 class EditFileOperation extends Operation {
   /**
    * @param {string} pathname
-   * @param {TextOperation} textOperation
+   * @param {EditOperation} operation
    */
-  constructor(pathname, textOperation) {
+  constructor(pathname, operation) {
     super()
     this.pathname = pathname
-    this.textOperation = textOperation
+    this.operation = operation
   }
 
   /**
@@ -23,20 +29,20 @@ class EditFileOperation extends Operation {
   toRaw() {
     return {
       pathname: this.pathname,
-      textOperation: this.textOperation.toJSON(),
+      ...this.operation.toJSON(),
     }
   }
 
   /**
    * Deserialize an EditFileOperation.
    *
-   * @param {Object} raw
+   * @param {RawEditFileOperation} raw
    * @return {EditFileOperation}
    */
   static fromRaw(raw) {
     return new EditFileOperation(
       raw.pathname,
-      TextOperation.fromJSON(raw.textOperation)
+      EditOperationBuilder.fromJSON(raw)
     )
   }
 
@@ -44,29 +50,36 @@ class EditFileOperation extends Operation {
     return this.pathname
   }
 
-  getTextOperation() {
-    return this.textOperation
+  getOperation() {
+    return this.operation
   }
 
   /**
    * @inheritdoc
+   * @param {Snapshot} snapshot
    */
   applyTo(snapshot) {
-    snapshot.editFile(this.pathname, this.textOperation)
+    // TODO(das7pad): can we teach typescript our polymorphism?
+    // @ts-ignore
+    snapshot.editFile(this.pathname, this.operation)
   }
 
   /**
    * @inheritdoc
+   * @param {Operation} other
+   * @return {boolean}
    */
   canBeComposedWithForUndo(other) {
     return (
       this.canBeComposedWith(other) &&
-      this.textOperation.canBeComposedWithForUndo(other.textOperation)
+      this.operation.canBeComposedWithForUndo(other.operation)
     )
   }
 
   /**
    * @inheritdoc
+   * @param {Operation} other
+   * @return {other is EditFileOperation}
    */
   canBeComposedWith(other) {
     // Ensure that other operation is an edit file operation
@@ -74,16 +87,17 @@ class EditFileOperation extends Operation {
     // Ensure that both operations are editing the same file
     if (this.getPathname() !== other.getPathname()) return false
 
-    return this.textOperation.canBeComposedWith(other.textOperation)
+    return this.operation.canBeComposedWith(other.operation)
   }
 
   /**
    * @inheritdoc
+   * @param {EditFileOperation} other
    */
   compose(other) {
     return new EditFileOperation(
       this.pathname,
-      this.textOperation.compose(other.textOperation)
+      this.operation.compose(other.operation)
     )
   }
 }

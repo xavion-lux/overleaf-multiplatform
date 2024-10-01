@@ -171,10 +171,21 @@ app.post(
   '/project/:project_id/doc/:doc_id/change/accept',
   HttpController.acceptChanges
 )
+app.post(
+  '/project/:project_id/doc/:doc_id/comment/:comment_id/resolve',
+  HttpController.resolveComment
+)
+app.post(
+  '/project/:project_id/doc/:doc_id/comment/:comment_id/reopen',
+  HttpController.reopenComment
+)
 app.delete(
   '/project/:project_id/doc/:doc_id/comment/:comment_id',
   HttpController.deleteComment
 )
+
+app.post('/project/:project_id/block', HttpController.blockProject)
+app.post('/project/:project_id/unblock', HttpController.unblockProject)
 
 app.get('/flush_all_projects', HttpController.flushAllProjects)
 app.get('/flush_queued_projects', HttpController.flushQueuedProjects)
@@ -194,7 +205,7 @@ app.use((error, req, res, next) => {
   if (error instanceof Errors.NotFoundError) {
     return res.sendStatus(404)
   } else if (error instanceof Errors.OpRangeNotAvailableError) {
-    return res.sendStatus(422) // Unprocessable Entity
+    return res.status(422).json(error.info)
   } else if (error instanceof Errors.FileTooLargeError) {
     return res.sendStatus(413)
   } else if (error.statusCode === 413) {
@@ -217,7 +228,7 @@ const shutdownCleanly = signal => () => {
   setTimeout(() => {
     logger.info({ signal }, 'shutting down')
     process.exit()
-  }, Settings.delayShutdownMs)
+  }, Settings.gracefulShutdownDelayInMs)
 }
 
 const watchForEvent = eventName => {
@@ -237,7 +248,7 @@ const port =
     Settings.api.documentupdater &&
     Settings.api.documentupdater.port) ||
   3003
-const host = Settings.internal.documentupdater.host || 'localhost'
+const host = Settings.internal.documentupdater.host || '127.0.0.1'
 
 if (!module.parent) {
   // Called directly

@@ -1,16 +1,40 @@
 import {
-  ChangeOperation,
+  AnyOperation,
+  Change,
   CommentOperation,
   DeleteOperation,
+  EditOperation,
   InsertOperation,
   Operation,
 } from '../../../types/change'
 
 export const isInsertOperation = (op: Operation): op is InsertOperation =>
   'i' in op
-export const isChangeOperation = (op: Operation): op is ChangeOperation =>
-  'c' in op && 't' in op
 export const isCommentOperation = (op: Operation): op is CommentOperation =>
-  'c' in op && !('t' in op)
+  'c' in op
 export const isDeleteOperation = (op: Operation): op is DeleteOperation =>
   'd' in op
+
+export const isInsertChange = (
+  change: Change<EditOperation>
+): change is Change<InsertOperation> => isInsertOperation(change.op)
+
+export const isCommentChange = (
+  change: Change<CommentOperation>
+): change is Change<CommentOperation> => isCommentOperation(change.op)
+
+export const isDeleteChange = (
+  change: Change<EditOperation>
+): change is Change<DeleteOperation> => isDeleteOperation(change.op)
+
+export const visibleTextLength = (op: AnyOperation) => {
+  if (isCommentOperation(op)) {
+    return op.c.length
+  }
+
+  if (isInsertOperation(op)) {
+    return op.i.length
+  }
+
+  return 0
+}

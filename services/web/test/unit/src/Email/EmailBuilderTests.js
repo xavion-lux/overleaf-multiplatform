@@ -537,12 +537,7 @@ describe('EmailBuilder', function () {
           }
           this.projectName = 'Top Secret'
           this.opts = {
-            inviteUrl:
-              `${this.settings.siteUrl}/project/projectId123/invite/token/aToken123?` +
-              [
-                `project_name=${encodeURIComponent(this.projectName)}`,
-                `user_first_name=${encodeURIComponent(this.owner.name)}`,
-              ].join('&'),
+            inviteUrl: `${this.settings.siteUrl}/project/projectId123/invite/token/aToken123`,
             owner: {
               email: this.owner.email,
             },
@@ -578,7 +573,161 @@ describe('EmailBuilder', function () {
           })
         })
       })
+
+      describe('welcome', function () {
+        beforeEach(function () {
+          this.emailAddress = 'example@overleaf.com'
+          this.opts = {
+            to: this.emailAddress,
+            confirmEmailUrl: `${this.settings.siteUrl}/user/emails/confirm?token=token123`,
+          }
+          this.email = this.EmailBuilder.buildEmail('welcome', this.opts)
+          this.dom = cheerio.load(this.email.html)
+        })
+
+        it('should build the email', function () {
+          expect(this.email.html).to.exist
+          expect(this.email.text).to.exist
+        })
+
+        describe('HTML email', function () {
+          it('should include a CTA button and a fallback CTA link', function () {
+            const buttonLink = this.dom('a:contains("Confirm Email")')
+            expect(buttonLink.length).to.equal(1)
+            expect(buttonLink.attr('href')).to.equal(this.opts.confirmEmailUrl)
+            const fallback = this.dom('.force-overleaf-style').last()
+            expect(fallback.length).to.equal(1)
+            expect(fallback.html()).to.contain(this.opts.confirmEmailUrl)
+          })
+          it('should include help links', function () {
+            const helpGuidesLink = this.dom('a:contains("Help Guides")')
+            const templatesLink = this.dom('a:contains("Templates")')
+            const logInLink = this.dom('a:contains("log in")')
+            expect(helpGuidesLink.length).to.equal(1)
+            expect(templatesLink.length).to.equal(1)
+            expect(logInLink.length).to.equal(1)
+          })
+        })
+
+        describe('plain text email', function () {
+          it('should contain the CTA URL', function () {
+            expect(this.email.text).to.contain(this.opts.confirmEmailUrl)
+          })
+          it('should include help URL', function () {
+            expect(this.email.text).to.contain('/learn')
+            expect(this.email.text).to.contain('/login')
+            expect(this.email.text).to.contain('/templates')
+          })
+          it('should contain HTML links', function () {
+            expect(this.email.text).to.not.contain('<a')
+          })
+        })
+      })
+
+      describe('groupSSODisabled', function () {
+        it('should build the email for non managed and linked users', function () {
+          const setNewPasswordUrl = `${this.settings.siteUrl}/user/password/reset`
+          const emailAddress = 'example@overleaf.com'
+          const opts = {
+            to: emailAddress,
+            setNewPasswordUrl,
+            userIsManaged: false,
+          }
+          const email = this.EmailBuilder.buildEmail('groupSSODisabled', opts)
+          expect(email.subject).to.equal(
+            'A change to your Overleaf login options'
+          )
+          const dom = cheerio.load(email.html)
+          expect(email.html).to.exist
+          expect(email.html).to.contain(
+            'Your group administrator has disabled single sign-on for your group.'
+          )
+          expect(email.html).to.contain(
+            'You can still log in to Overleaf using one of our other'
+          )
+          const links = dom('a')
+          expect(links[0].attribs.href).to.equal(
+            `${this.settings.siteUrl}/login`
+          )
+          expect(links[1].attribs.href).to.equal(setNewPasswordUrl)
+          expect(email.html).to.contain(
+            "If you don't have a password, you can set one now."
+          )
+          expect(email.text).to.exist
+          const expectedPlainText = [
+            'Hi,',
+            '',
+            'Your group administrator has disabled single sign-on for your group.',
+            '',
+            '',
+            '',
+            'What does this mean for you?',
+            '',
+            'You can still log in to Overleaf using one of our other login options or with your email address and password.',
+            '',
+            "If you don't have a password, you can set one now.",
+            '',
+            `Set your new password: ${setNewPasswordUrl}`,
+            '',
+            '',
+            '',
+            'Regards,',
+            `The ${this.settings.appName} Team - ${this.settings.siteUrl}`,
+          ]
+          expect(email.text.split(/\r?\n/)).to.deep.equal(expectedPlainText)
+        })
+
+        it('should build the email for managed and linked users', function () {
+          const emailAddress = 'example@overleaf.com'
+          const setNewPasswordUrl = `${this.settings.siteUrl}/user/password/reset`
+          const opts = {
+            to: emailAddress,
+            setNewPasswordUrl,
+            userIsManaged: true,
+          }
+          const email = this.EmailBuilder.buildEmail('groupSSODisabled', opts)
+          expect(email.subject).to.equal(
+            'Action required: Set your Overleaf password'
+          )
+          const dom = cheerio.load(email.html)
+          expect(email.html).to.exist
+          expect(email.html).to.contain(
+            'Your group administrator has disabled single sign-on for your group.'
+          )
+          expect(email.html).to.contain(
+            'You now need an email address and password to sign in to your Overleaf account.'
+          )
+          const links = dom('a')
+          expect(links[0].attribs.href).to.equal(
+            `${this.settings.siteUrl}/user/password/reset`
+          )
+
+          expect(email.text).to.exist
+
+          const expectedPlainText = [
+            'Hi,',
+            '',
+            'Your group administrator has disabled single sign-on for your group.',
+            '',
+            '',
+            '',
+            'What does this mean for you?',
+            '',
+            'You now need an email address and password to sign in to your Overleaf account.',
+            '',
+            `Set your new password: ${setNewPasswordUrl}`,
+            '',
+            '',
+            '',
+            'Regards,',
+            `The ${this.settings.appName} Team - ${this.settings.siteUrl}`,
+          ]
+
+          expect(email.text.split(/\r?\n/)).to.deep.equal(expectedPlainText)
+        })
+      })
     })
+
     describe('no CTA', function () {
       describe('securityAlert', function () {
         before(function () {
@@ -625,6 +774,47 @@ describe('EmailBuilder', function () {
           it('should remove all HTML in opts.message', function () {
             expect(this.email.text).to.not.contain(this.messageHTML)
             expect(this.email.text).to.contain(this.message)
+          })
+        })
+      })
+
+      describe('welcomeWithoutCTA', function () {
+        beforeEach(function () {
+          this.emailAddress = 'example@overleaf.com'
+          this.opts = {
+            to: this.emailAddress,
+          }
+          this.email = this.EmailBuilder.buildEmail(
+            'welcomeWithoutCTA',
+            this.opts
+          )
+          this.dom = cheerio.load(this.email.html)
+        })
+
+        it('should build the email', function () {
+          expect(this.email.html).to.exist
+          expect(this.email.text).to.exist
+        })
+
+        describe('HTML email', function () {
+          it('should include help links', function () {
+            const helpGuidesLink = this.dom('a:contains("Help Guides")')
+            const templatesLink = this.dom('a:contains("Templates")')
+            const logInLink = this.dom('a:contains("log in")')
+            expect(helpGuidesLink.length).to.equal(1)
+            expect(templatesLink.length).to.equal(1)
+            expect(logInLink.length).to.equal(1)
+          })
+        })
+
+        describe('plain text email', function () {
+          it('should include help URL', function () {
+            expect(this.email.text).to.contain('/learn')
+            expect(this.email.text).to.contain('/login')
+            expect(this.email.text).to.contain('/templates')
+          })
+          it('should contain HTML links', function () {
+            expect(this.email.text).to.not.contain('<a')
           })
         })
       })

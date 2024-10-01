@@ -21,6 +21,12 @@ export function initialize(app) {
 
   app.delete('/project/:project_id', HttpController.deleteProject)
 
+  app.get('/project/:project_id/snapshot', HttpController.getLatestSnapshot)
+  app.get(
+    '/project/:project_id/latest/history',
+    HttpController.getMostRecentChunk
+  )
+
   app.get(
     '/project/:project_id/diff',
     validate({
@@ -55,6 +61,26 @@ export function initialize(app) {
     HttpController.getUpdates
   )
 
+  app.get(
+    '/project/:project_id/changes',
+    validate({
+      query: {
+        since: Joi.number().integer().min(0),
+      },
+    }),
+    HttpController.getChangesSince
+  )
+
+  app.get(
+    '/project/:project_id/changes-in-chunk',
+    validate({
+      query: {
+        since: Joi.number().integer().min(0),
+      },
+    }),
+    HttpController.getChangesInChunkSince
+  )
+
   app.get('/project/:project_id/version', HttpController.latestVersion)
 
   app.post(
@@ -79,6 +105,9 @@ export function initialize(app) {
         origin: Joi.object({
           kind: Joi.string().required(),
         }),
+        historyRangesMigration: Joi.string()
+          .optional()
+          .valid('forwards', 'backwards'),
       },
     }),
     HttpController.resyncProject
@@ -112,6 +141,24 @@ export function initialize(app) {
 
   app.delete(
     '/project/:project_id/user/:user_id/labels/:label_id',
+    validate({
+      params: Joi.object({
+        project_id: Joi.string().regex(/^[0-9a-f]{24}$/),
+        user_id: Joi.string().regex(/^[0-9a-f]{24}$/),
+        label_id: Joi.string().regex(/^[0-9a-f]{24}$/),
+      }),
+    }),
+    HttpController.deleteLabelForUser
+  )
+
+  app.delete(
+    '/project/:project_id/labels/:label_id',
+    validate({
+      params: Joi.object({
+        project_id: Joi.string().regex(/^[0-9a-f]{24}$/),
+        label_id: Joi.string().regex(/^[0-9a-f]{24}$/),
+      }),
+    }),
     HttpController.deleteLabel
   )
 
@@ -126,8 +173,23 @@ export function initialize(app) {
   )
 
   app.get(
+    '/project/:project_id/ranges/version/:version/:pathname',
+    HttpController.getRangesSnapshot
+  )
+
+  app.get(
+    '/project/:project_id/metadata/version/:version/:pathname',
+    HttpController.getFileMetadataSnapshot
+  )
+
+  app.get(
     '/project/:project_id/version/:version',
     HttpController.getProjectSnapshot
+  )
+
+  app.get(
+    '/project/:project_id/paths/version/:version',
+    HttpController.getPathsAtVersion
   )
 
   app.post(
@@ -140,7 +202,7 @@ export function initialize(app) {
     HttpController.forceDebugProject
   )
 
-  app.get('/project/:project_id/blob/:hash', HttpController.getProjectBlob)
+  app.get('/project/:history_id/blob/:hash', HttpController.getProjectBlob)
 
   app.get('/status/failures', HttpController.getFailures)
 

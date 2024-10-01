@@ -1,6 +1,6 @@
 const OError = require('@overleaf/o-error')
 const HttpErrorHandler = require('../../Features/Errors/HttpErrorHandler')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const CollaboratorsHandler = require('./CollaboratorsHandler')
 const CollaboratorsGetter = require('./CollaboratorsGetter')
 const OwnershipTransferHandler = require('./OwnershipTransferHandler')
@@ -13,6 +13,10 @@ const { expressify } = require('@overleaf/promise-utils')
 const { hasAdminAccess } = require('../Helpers/AdminAuthorizationHelper')
 const TokenAccessHandler = require('../TokenAccess/TokenAccessHandler')
 const ProjectAuditLogHandler = require('../Project/ProjectAuditLogHandler')
+const ProjectGetter = require('../Project/ProjectGetter')
+const SplitTestHandler = require('../SplitTests/SplitTestHandler')
+const LimitationsManager = require('../Subscription/LimitationsManager')
+const PrivilegeLevels = require('../Authorization/PrivilegeLevels')
 
 module.exports = {
   removeUserFromProject: expressify(removeUserFromProject),
@@ -75,6 +79,28 @@ async function setCollaboratorInfo(req, res, next) {
     const projectId = req.params.Project_id
     const userId = req.params.user_id
     const { privilegeLevel } = req.body
+
+    if (privilegeLevel !== PrivilegeLevels.READ_ONLY) {
+      const project = await ProjectGetter.promises.getProject(projectId, {
+        owner_ref: 1,
+      })
+      const linkSharingChanges =
+        await SplitTestHandler.promises.getAssignmentForUser(
+          project.owner_ref,
+          'link-sharing-warning'
+        )
+      const allowed =
+        await LimitationsManager.promises.canAddXEditCollaborators(projectId, 1)
+      if (linkSharingChanges?.variant === 'active') {
+        if (!allowed) {
+          return HttpErrorHandler.forbidden(
+            req,
+            res,
+            'edit collaborator limit reached'
+          )
+        }
+      }
+    }
     await CollaboratorsHandler.promises.setCollaboratorPrivilegeLevel(
       projectId,
       userId,
@@ -82,8 +108,8 @@ async function setCollaboratorInfo(req, res, next) {
     )
     EditorRealTimeController.emitToRoom(
       projectId,
-      'project:membership:changed',
-      { members: true }
+      'project:collaboratorAccessLevel:changed',
+      { userId }
     )
     res.sendStatus(204)
   } catch (err) {

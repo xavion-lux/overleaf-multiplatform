@@ -1,30 +1,35 @@
+// @ts-check
+
 import _ from 'lodash'
 import Core from 'overleaf-editor-core'
 import * as Errors from './Errors.js'
 import * as OperationsCompressor from './OperationsCompressor.js'
+import { isInsert, isRetain, isDelete, isComment } from './Utils.js'
 
-export function convertToChanges(projectId, updatesWithBlobs, callback) {
-  let changes
-  try {
-    // convert update to change
-    changes = updatesWithBlobs.map(update =>
-      _convertToChange(projectId, update)
-    )
-  } catch (error1) {
-    const error = error1
-    if (
-      error instanceof Errors.UpdateWithUnknownFormatError ||
-      error instanceof Errors.UnexpectedOpTypeError
-    ) {
-      return callback(error)
-    } else {
-      throw error
-    }
-  }
+/**
+ * @import { AddDocUpdate, AddFileUpdate, DeleteCommentUpdate, Op, RawScanOp } from './types'
+ * @import { RenameUpdate, TextUpdate, TrackingDirective, TrackingProps } from './types'
+ * @import { SetCommentStateUpdate, SetFileMetadataOperation, Update, UpdateWithBlob } from './types'
+ */
 
-  callback(null, changes)
+/**
+ * Convert updates into history changes
+ *
+ * @param {string} projectId
+ * @param {UpdateWithBlob[]} updatesWithBlobs
+ * @returns {Array<Core.Change | null>}
+ */
+export function convertToChanges(projectId, updatesWithBlobs) {
+  return updatesWithBlobs.map(update => _convertToChange(projectId, update))
 }
 
+/**
+ * Convert an update into a history change
+ *
+ * @param {string} projectId
+ * @param {UpdateWithBlob} updateWithBlob
+ * @returns {Core.Change | null}
+ */
 function _convertToChange(projectId, updateWithBlob) {
   let operations
   const { update } = updateWithBlob
@@ -41,30 +46,57 @@ function _convertToChange(projectId, updateWithBlob) {
     ]
     projectVersion = update.version
   } else if (isAddUpdate(update)) {
-    operations = [
-      {
-        pathname: _convertPathname(update.pathname),
-        file: {
-          hash: updateWithBlob.blobHash,
-        },
+    const op = {
+      pathname: _convertPathname(update.pathname),
+      file: {
+        hash: updateWithBlob.blobHashes.file,
       },
-    ]
+    }
+    if (_isAddDocUpdate(update)) {
+      op.file.rangesHash = updateWithBlob.blobHashes.ranges
+    }
+    if (_isAddFileUpdate(update)) {
+      op.file.metadata = update.metadata
+    }
+    operations = [op]
     projectVersion = update.version
   } else if (isTextUpdate(update)) {
-    const docLength = update.meta.doc_length
+    const docLength = update.meta.history_doc_length ?? update.meta.doc_length
     let pathname = update.meta.pathname
 
     pathname = _convertPathname(pathname)
-    const builder = new TextOperationsBuilder(docLength, pathname)
+    const builder = new OperationsBuilder(docLength, pathname)
     // convert ops
     for (const op of update.op) {
-      builder.addOp(op)
-    } // if this throws an exception it will be caught in convertToChanges
+      builder.addOp(op, update)
+    }
     operations = builder.finish()
     // add doc version information if present
     if (update.v != null) {
       v2DocVersions[update.doc] = { pathname, v: update.v }
     }
+  } else if (isSetCommentStateUpdate(update)) {
+    operations = [
+      {
+        pathname: _convertPathname(update.pathname),
+        commentId: update.commentId,
+        resolved: update.resolved,
+      },
+    ]
+  } else if (isSetFileMetadataOperation(update)) {
+    operations = [
+      {
+        pathname: _convertPathname(update.pathname),
+        metadata: update.metadata,
+      },
+    ]
+  } else if (isDeleteCommentUpdate(update)) {
+    operations = [
+      {
+        pathname: _convertPathname(update.pathname),
+        deleteComment: update.deleteComment,
+      },
+    ]
   } else {
     const error = new Errors.UpdateWithUnknownFormatError(
       'update with unknown format',
@@ -96,28 +128,62 @@ function _convertToChange(projectId, updateWithBlob) {
   }
   const change = Core.Change.fromRaw(rawChange)
 
-  change.operations = OperationsCompressor.compressOperations(change.operations)
+  if (change != null) {
+    change.operations = OperationsCompressor.compressOperations(
+      change.operations
+    )
+  }
 
   return change
 }
 
+/**
+ * @param {Update} update
+ * @returns {update is RenameUpdate}
+ */
 function _isRenameUpdate(update) {
-  return update.new_pathname != null
+  return 'new_pathname' in update && update.new_pathname != null
 }
 
+/**
+ * @param {Update} update
+ * @returns {update is AddDocUpdate}
+ */
 function _isAddDocUpdate(update) {
-  return update.doc != null && update.docLines != null
+  return (
+    'doc' in update &&
+    update.doc != null &&
+    'docLines' in update &&
+    update.docLines != null
+  )
 }
 
+/**
+ * @param {Update} update
+ * @returns {update is AddFileUpdate}
+ */
 function _isAddFileUpdate(update) {
-  return update.file != null && update.url != null
+  return (
+    'file' in update &&
+    update.file != null &&
+    'url' in update &&
+    update.url != null
+  )
 }
 
+/**
+ * @param {Update} update
+ * @returns {update is TextUpdate}
+ */
 export function isTextUpdate(update) {
   return (
+    'doc' in update &&
     update.doc != null &&
+    'op' in update &&
     update.op != null &&
+    'pathname' in update.meta &&
     update.meta.pathname != null &&
+    'doc_length' in update.meta &&
     update.meta.doc_length != null
   )
 }
@@ -126,8 +192,36 @@ export function isProjectStructureUpdate(update) {
   return isAddUpdate(update) || _isRenameUpdate(update)
 }
 
+/**
+ * @param {Update} update
+ * @returns {update is AddDocUpdate | AddFileUpdate}
+ */
 export function isAddUpdate(update) {
   return _isAddDocUpdate(update) || _isAddFileUpdate(update)
+}
+
+/**
+ * @param {Update} update
+ * @returns {update is SetCommentStateUpdate}
+ */
+export function isSetCommentStateUpdate(update) {
+  return 'commentId' in update && 'resolved' in update
+}
+
+/**
+ * @param {Update} update
+ * @returns {update is DeleteCommentUpdate}
+ */
+export function isDeleteCommentUpdate(update) {
+  return 'deleteComment' in update
+}
+
+/**
+ * @param {Update} update
+ * @returns {update is SetFileMetadataOperation}
+ */
+export function isSetFileMetadataOperation(update) {
+  return 'metadata' in update
 }
 
 export function _convertPathname(pathname) {
@@ -142,40 +236,78 @@ export function _convertPathname(pathname) {
   // workaround for filenames containing asterisks, this will
   // fail if a corresponding replacement file already exists but it
   // would fail anyway without this attempt to fix the pathname.
-  // See https://github.com/overleaf/sharelatex/issues/900
+  // See https://github.com/overleaf/internal/issues/900
   pathname = pathname.replace(/\*/g, '__ASTERISK__')
   // workaround for filenames beginning with spaces
-  // See https://github.com/overleaf/sharelatex/issues/1404
+  // See https://github.com/overleaf/internal/issues/1404
   // note: we have already stripped any leading slash above
   pathname = pathname.replace(/^ /, '__SPACE__') // handle top-level
   pathname = pathname.replace(/\/ /g, '/__SPACE__') // handle folders
   return pathname
 }
 
-class TextOperationsBuilder {
+class OperationsBuilder {
+  /**
+   * @param {number} docLength
+   * @param {string} pathname
+   */
   constructor(docLength, pathname) {
+    /**
+     * List of operations being built
+     */
     this.operations = []
-    this.currentOperation = []
+
+    /**
+     * Currently built text operation
+     *
+     * @type {RawScanOp[]}
+     */
+    this.textOperation = []
+
+    /**
+     * Cursor inside the current text operation
+     */
     this.cursor = 0
+
     this.docLength = docLength
     this.pathname = pathname
   }
 
-  addOp(op) {
-    if (op.c != null) {
-      return // ignore comment op
-    }
-    if (op.i == null && op.d == null) {
-      throw new Errors.UnexpectedOpTypeError('unexpected op type', { op })
-    }
-
+  /**
+   * @param {Op} op
+   * @param {TextUpdate} update
+   * @returns {void}
+   */
+  addOp(op, update) {
     // We sometimes receive operations that operate at positions outside the
     // docLength. Document updater coerces the position to the end of the
     // document. We do the same here.
-    const pos = Math.min(op.p, this.docLength)
+    const pos = Math.min(op.hpos ?? op.p, this.docLength)
+
+    if (isComment(op)) {
+      // Close the current text operation
+      this.pushTextOperation()
+
+      // Add a comment operation
+      const commentLength = op.hlen ?? op.c.length
+      const commentOp = {
+        pathname: this.pathname,
+        commentId: op.t,
+        ranges: commentLength > 0 ? [{ pos, length: commentLength }] : [],
+      }
+      if ('resolved' in op) {
+        commentOp.resolved = op.resolved
+      }
+      this.operations.push(commentOp)
+      return
+    }
+
+    if (!isInsert(op) && !isDelete(op) && !isRetain(op)) {
+      throw new Errors.UnexpectedOpTypeError('unexpected op type', { op })
+    }
 
     if (pos < this.cursor) {
-      this.pushCurrentOperation()
+      this.pushTextOperation()
       // At this point, this.cursor === 0 and we can continue
     }
 
@@ -183,47 +315,158 @@ class TextOperationsBuilder {
       this.retain(pos - this.cursor)
     }
 
-    if (op.i != null) {
-      this.insert(op.i)
+    if (isInsert(op)) {
+      if (op.trackedDeleteRejection) {
+        this.retain(op.i.length, {
+          tracking: { type: 'none' },
+        })
+      } else {
+        const opts = {}
+        if (update.meta.tc != null) {
+          opts.tracking = {
+            type: 'insert',
+            userId: update.meta.user_id,
+            ts: new Date(update.meta.ts).toISOString(),
+          }
+        }
+        if (op.commentIds != null) {
+          opts.commentIds = op.commentIds
+        }
+        this.insert(op.i, opts)
+      }
     }
 
-    if (op.d != null) {
-      this.delete(op.d.length)
+    if (isRetain(op)) {
+      if (op.tracking) {
+        this.retain(op.r.length, { tracking: op.tracking })
+      } else {
+        this.retain(op.r.length)
+      }
+    }
+
+    if (isDelete(op)) {
+      const changes = op.trackedChanges ?? []
+
+      // Tracked changes should already be ordered by offset, but let's make
+      // sure they are.
+      changes.sort((a, b) => {
+        const posOrder = a.offset - b.offset
+        if (posOrder !== 0) {
+          return posOrder
+        } else if (a.type === 'insert' && b.type === 'delete') {
+          return 1
+        } else if (a.type === 'delete' && b.type === 'insert') {
+          return -1
+        } else {
+          return 0
+        }
+      })
+
+      let offset = 0
+      for (const change of changes) {
+        if (change.offset > offset) {
+          // Handle the portion before the tracked change
+          if (update.meta.tc != null) {
+            // This is a tracked delete
+            this.retain(change.offset - offset, {
+              tracking: {
+                type: 'delete',
+                userId: update.meta.user_id,
+                ts: new Date(update.meta.ts).toISOString(),
+              },
+            })
+          } else {
+            // This is a regular delete
+            this.delete(change.offset - offset)
+          }
+          offset = change.offset
+        }
+
+        // Now, handle the portion inside the tracked change
+        if (change.type === 'delete') {
+          // Tracked deletes are skipped over when deleting
+          this.retain(change.length)
+        } else if (change.type === 'insert') {
+          // Deletes inside tracked inserts are always regular deletes
+          this.delete(change.length)
+          offset += change.length
+        }
+      }
+      if (offset < op.d.length) {
+        // Handle the portion after the last tracked change
+        if (update.meta.tc != null) {
+          // This is a tracked delete
+          this.retain(op.d.length - offset, {
+            tracking: {
+              type: 'delete',
+              userId: update.meta.user_id,
+              ts: new Date(update.meta.ts).toISOString(),
+            },
+          })
+        } else {
+          // This is a regular delete
+          this.delete(op.d.length - offset)
+        }
+      }
     }
   }
 
-  retain(length) {
-    this.currentOperation.push(length)
+  /**
+   * @param {number} length
+   * @param {object} opts
+   * @param {TrackingDirective} [opts.tracking]
+   */
+  retain(length, opts = {}) {
+    if (opts.tracking) {
+      this.textOperation.push({ r: length, ...opts })
+    } else {
+      this.textOperation.push(length)
+    }
     this.cursor += length
   }
 
-  insert(str) {
-    this.currentOperation.push(str)
+  /**
+   * @param {string} str
+   * @param {object} opts
+   * @param {TrackingProps} [opts.tracking]
+   * @param {string[]} [opts.commentIds]
+   */
+  insert(str, opts = {}) {
+    if (opts.tracking || opts.commentIds) {
+      this.textOperation.push({ i: str, ...opts })
+    } else {
+      this.textOperation.push(str)
+    }
     this.cursor += str.length
     this.docLength += str.length
   }
 
-  delete(length) {
-    this.currentOperation.push(-length)
+  /**
+   * @param {number} length
+   * @param {object} opts
+   */
+  delete(length, opts = {}) {
+    this.textOperation.push(-length)
     this.docLength -= length
   }
 
-  pushCurrentOperation() {
-    if (this.cursor < this.docLength) {
-      this.retain(this.docLength - this.cursor)
-    }
-    if (this.currentOperation.length > 0) {
+  pushTextOperation() {
+    if (this.textOperation.length > 0)
+      if (this.cursor < this.docLength) {
+        this.retain(this.docLength - this.cursor)
+      }
+    if (this.textOperation.length > 0) {
       this.operations.push({
         pathname: this.pathname,
-        textOperation: this.currentOperation,
+        textOperation: this.textOperation,
       })
-      this.currentOperation = []
+      this.textOperation = []
     }
     this.cursor = 0
   }
 
   finish() {
-    this.pushCurrentOperation()
+    this.pushTextOperation()
     return this.operations
   }
 }

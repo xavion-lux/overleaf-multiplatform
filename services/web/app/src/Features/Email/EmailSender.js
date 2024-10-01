@@ -59,16 +59,20 @@ function getClient() {
     )
     client = {
       async sendMail(options) {
-        logger.debug({ options }, 'Would send email if enabled.')
+        logger.info({ options }, 'Would send email if enabled.')
       },
     }
   }
   return client
 }
 
-async function sendEmail(options) {
+async function sendEmail(options, emailType) {
   try {
     const canContinue = await checkCanSendEmail(options)
+    metrics.inc('email_status', {
+      status: canContinue ? 'sent' : 'rate_limited',
+      path: emailType,
+    })
     if (!canContinue) {
       logger.debug(
         {
@@ -112,7 +116,7 @@ async function checkCanSendEmail(options) {
     return true
   }
   try {
-    await rateLimiter.consume(options.sendingUser_id)
+    await rateLimiter.consume(options.sendingUser_id, 1, { method: 'userId' })
   } catch (err) {
     if (err instanceof Error) {
       throw err

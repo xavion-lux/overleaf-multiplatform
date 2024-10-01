@@ -2,7 +2,7 @@
 
 // To run in dev:
 //
-// docker-compose run --rm project-history scripts/clear_deleted.js
+// docker compose run --rm project-history scripts/clear_deleted.js
 //
 // In production:
 //
@@ -232,7 +232,7 @@ async function main() {
     'number of queues with project structure version out of order on incoming updates=',
     results.length
   )
-  // now clear the sharelatex projects
+  // now clear the projects
   async.eachSeries(results.slice(0, limit), checkAndClear, err => {
     console.log('Final error status', err)
     console.log(

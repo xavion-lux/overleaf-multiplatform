@@ -3,7 +3,12 @@ const Async = require('async')
 const User = require('./helpers/User')
 const settings = require('@overleaf/settings')
 const CollaboratorsEmailHandler = require('../../../app/src/Features/Collaborators/CollaboratorsEmailHandler')
+const CollaboratorsInviteHelper = require('../../../app/src/Features/Collaborators/CollaboratorsInviteHelper')
 const Features = require('../../../app/src/infrastructure/Features')
+const cheerio = require('cheerio')
+const sinon = require('sinon')
+
+let generateTokenSpy
 
 const createInvite = (sendingUser, projectId, email, callback) => {
   sendingUser.getCsrfToken(err => {
@@ -23,6 +28,8 @@ const createInvite = (sendingUser, projectId, email, callback) => {
           return callback(err)
         }
         expect(response.statusCode).to.equal(200)
+        expect(body.error).to.not.exist
+        expect(body.invite).to.exist
         callback(null, body.invite)
       }
     )
@@ -52,6 +59,8 @@ const createProjectAndInvite = (owner, projectName, email, callback) => {
       if (err) {
         return callback(err)
       }
+      // attach the token to the invite
+      invite.token = generateTokenSpy.getCall(0).returnValue
       const link = CollaboratorsEmailHandler._buildInviteUrl(project, invite)
       callback(null, project, invite, link)
     })
@@ -88,34 +97,16 @@ const tryFollowInviteLink = (user, link, callback) => {
   )
 }
 
-const tryAcceptInvite = (user, invite, callback) => {
+const tryAcceptInvite = (user, invite, projectId, callback) => {
   user.getCsrfToken(err => {
     if (err) {
       return callback(err)
     }
     user.request.post(
       {
-        uri: `/project/${invite.projectId}/invite/token/${invite.token}/accept`,
+        uri: `/project/${projectId}/invite/token/${invite.token}/accept`,
         json: {
           token: invite.token,
-        },
-      },
-      callback
-    )
-  })
-}
-
-const tryRegisterUser = (user, email, callback) => {
-  user.getCsrfToken(error => {
-    if (error != null) {
-      return callback(error)
-    }
-    user.request.post(
-      {
-        url: '/register',
-        json: {
-          email,
-          password: 'some_weird_password',
         },
       },
       callback
@@ -174,13 +165,12 @@ const tryJoinProject = (user, projectId, callback) => {
     user.request.post(
       {
         url: `/project/${projectId}/join`,
-        qs: { user_id: user._id },
         auth: {
           user: settings.apis.web.user,
           pass: settings.apis.web.pass,
           sendImmediately: true,
         },
-        json: true,
+        json: { userId: user._id },
         jar: false,
       },
       callback
@@ -219,7 +209,7 @@ const expectInvalidInvitePage = (user, link, callback) => {
   // view invalid invite
   tryFollowInviteLink(user, link, (err, response, body) => {
     expect(err).not.to.exist
-    expect(response.statusCode).to.equal(200)
+    expect(response.statusCode).to.equal(404)
     expect(body).to.match(/<title>Invalid Invite - .*<\/title>/)
     callback()
   })
@@ -231,7 +221,15 @@ const expectInviteRedirectToRegister = (user, link, callback) => {
     expect(err).not.to.exist
     expect(response.statusCode).to.equal(302)
     expect(response.headers.location).to.match(/^\/register.*$/)
-    callback()
+
+    user.getSession((err, session) => {
+      if (err) return callback(err)
+      expect(session.sharedProjectData).deep.equals({
+        project_name: PROJECT_NAME,
+        user_first_name: OWNER_NAME,
+      })
+      callback()
+    })
   })
 }
 
@@ -239,7 +237,7 @@ const expectLoginPage = (user, callback) => {
   tryFollowLoginLink(user, '/login', (err, response, body) => {
     expect(err).not.to.exist
     expect(response.statusCode).to.equal(200)
-    expect(body).to.match(/<title>Login - .*<\/title>/)
+    expect(body).to.match(/<title>(Login|Log in to Overleaf) - .*<\/title>/)
     callback()
   })
 }
@@ -252,30 +250,45 @@ const expectLoginRedirectToInvite = (user, link, callback) => {
   })
 }
 
-const expectRegistrationRedirectToInvite = (user, email, link, callback) => {
-  tryRegisterUser(user, email, (err, response) => {
+const expectRegistrationRedirectToInvite = (user, link, callback) => {
+  user.register((err, _user, response) => {
     expect(err).not.to.exist
     expect(response.statusCode).to.equal(200)
-    callback()
+
+    if (response.body.redir === '/registration/try-premium') {
+      user.request.get('/registration/onboarding', (err, response) => {
+        if (err) return callback(err)
+        expect(response.statusCode).to.equal(200)
+        const dom = cheerio.load(response.body)
+        const skipUrl = dom('meta[name="ol-skipUrl"]')[0].attribs.content
+        expect(new URL(skipUrl, settings.siteUrl).href).to.equal(
+          new URL(link, settings.siteUrl).href
+        )
+        callback()
+      })
+    } else {
+      expect(response.body.redir).to.equal(link)
+      callback()
+    }
   })
 }
 
-const expectInviteRedirectToProject = (user, link, invite, callback) => {
+const expectInviteRedirectToProject = (user, link, projectId, callback) => {
   // view invite, redirect straight to project
   tryFollowInviteLink(user, link, (err, response) => {
     expect(err).not.to.exist
     expect(response.statusCode).to.equal(302)
-    expect(response.headers.location).to.equal(`/project/${invite.projectId}`)
+    expect(response.headers.location).to.equal(`/project/${projectId}`)
     callback()
   })
 }
 
-const expectAcceptInviteAndRedirect = (user, invite, callback) => {
+const expectAcceptInviteAndRedirect = (user, invite, projectId, callback) => {
   // should accept the invite and redirect to project
-  tryAcceptInvite(user, invite, (err, response) => {
+  tryAcceptInvite(user, invite, projectId, (err, response) => {
     expect(err).not.to.exist
     expect(response.statusCode).to.equal(302)
-    expect(response.headers.location).to.equal(`/project/${invite.projectId}`)
+    expect(response.headers.location).to.equal(`/project/${projectId}`)
     callback()
   })
 }
@@ -300,18 +313,29 @@ const expectInvitesInJoinProjectCount = (user, projectId, count, callback) => {
   })
 }
 
+const PROJECT_NAME = 'project name for sharing test'
+const OWNER_NAME = 'sending user name'
+
 describe('ProjectInviteTests', function () {
   beforeEach(function (done) {
     this.sendingUser = new User()
     this.user = new User()
-    this.site_admin = new User({ email: 'admin@example.com' })
-    this.email = 'smoketestuser@example.com'
-    this.projectName = 'sharing test'
+    this.site_admin = new User({ email: `admin+${Math.random()}@example.com` })
+    this.email = `smoketestuser+${Math.random()}@example.com`
+
+    generateTokenSpy = sinon.spy(CollaboratorsInviteHelper, 'generateToken')
+
     Async.series(
       [
-        cb => this.user.ensureUserExists(cb),
         cb => this.sendingUser.login(cb),
         cb => this.sendingUser.setFeatures({ collaborators: 10 }, cb),
+        cb =>
+          this.sendingUser.mongoUpdate(
+            {
+              $set: { first_name: OWNER_NAME },
+            },
+            cb
+          ),
         cb =>
           this.sendingUser.setFeaturesOverride(
             {
@@ -325,16 +349,16 @@ describe('ProjectInviteTests', function () {
     )
   })
 
-  describe('creating invites', function () {
-    beforeEach(function () {
-      this.projectName = 'wat'
-    })
+  afterEach(function () {
+    generateTokenSpy.restore()
+  })
 
+  describe('creating invites', function () {
     describe('creating two invites', function () {
       beforeEach(function (done) {
         createProject(
           this.sendingUser,
-          this.projectName,
+          PROJECT_NAME,
           (err, projectId, project) => {
             expect(err).not.to.exist
             this.projectId = projectId
@@ -502,7 +526,7 @@ describe('ProjectInviteTests', function () {
     beforeEach(function (done) {
       createProjectAndInvite(
         this.sendingUser,
-        this.projectName,
+        PROJECT_NAME,
         this.email,
         (err, project, invite, link) => {
           expect(err).not.to.exist
@@ -525,8 +549,14 @@ describe('ProjectInviteTests', function () {
           Async.series(
             [
               cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectAcceptInviteAndRedirect(this.user, this.invite, cb),
-              cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+              cb =>
+                expectAcceptInviteAndRedirect(
+                  this.user,
+                  this.invite,
+                  this.projectId,
+                  cb
+                ),
+              cb => expectProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -536,15 +566,15 @@ describe('ProjectInviteTests', function () {
           it('should just redirect to the project page', function (done) {
             Async.series(
               [
-                cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+                cb => expectProjectAccess(this.user, this.projectId, cb),
                 cb =>
                   expectInviteRedirectToProject(
                     this.user,
                     this.link,
-                    this.invite,
+                    this.projectId,
                     cb
                   ),
-                cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+                cb => expectProjectAccess(this.user, this.projectId, cb),
               ],
               done
             )
@@ -564,10 +594,11 @@ describe('ProjectInviteTests', function () {
                           throw err
                         }
                         this.secondInvite = invite
+                        const token = generateTokenSpy.getCall(1).returnValue
                         this.secondLink =
                           CollaboratorsEmailHandler._buildInviteUrl(
                             this.fakeProject,
-                            invite
+                            { ...invite, token }
                           )
                         cb()
                       }
@@ -577,11 +608,10 @@ describe('ProjectInviteTests', function () {
                     expectInviteRedirectToProject(
                       this.user,
                       this.secondLink,
-                      this.secondInvite,
+                      this.projectId,
                       cb
                     ),
-                  cb =>
-                    expectProjectAccess(this.user, this.invite.projectId, cb),
+                  cb => expectProjectAccess(this.user, this.projectId, cb),
                   cb =>
                     revokeInvite(
                       this.sendingUser,
@@ -602,7 +632,7 @@ describe('ProjectInviteTests', function () {
           Async.series(
             [
               cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -618,8 +648,8 @@ describe('ProjectInviteTests', function () {
                 )
                 expectInvalidInvitePage(this.user, link, cb)
               },
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -629,8 +659,14 @@ describe('ProjectInviteTests', function () {
           Async.series(
             [
               cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectAcceptInviteAndRedirect(this.user, this.invite, cb),
-              cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+              cb =>
+                expectAcceptInviteAndRedirect(
+                  this.user,
+                  this.invite,
+                  this.projectId,
+                  cb
+                ),
+              cb => expectProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -655,15 +691,16 @@ describe('ProjectInviteTests', function () {
             [
               cb => expectInviteRedirectToRegister(this.user, this.link, cb),
               cb =>
-                expectRegistrationRedirectToInvite(
+                expectRegistrationRedirectToInvite(this.user, this.link, cb),
+              cb => expectInvitePage(this.user, this.link, cb),
+              cb =>
+                expectAcceptInviteAndRedirect(
                   this.user,
-                  'some_email@example.com',
-                  this.link,
+                  this.invite,
+                  this.projectId,
                   cb
                 ),
-              cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectAcceptInviteAndRedirect(this.user, this.invite, cb),
-              cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -681,29 +718,21 @@ describe('ProjectInviteTests', function () {
           Async.series(
             [
               cb => expectInviteRedirectToRegister(this.user, this.link, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
         })
 
-        it('should display invalid-invite if the user registers a new account', function (done) {
+        it('should display invalid-invite right away', function (done) {
           const badLink = this.link.replace(
             this.invite.token,
             'not_a_real_token'
           )
           Async.series(
             [
-              cb => expectInviteRedirectToRegister(this.user, badLink, cb),
-              cb =>
-                expectRegistrationRedirectToInvite(
-                  this.user,
-                  'some_email@example.com',
-                  badLink,
-                  cb
-                ),
               cb => expectInvalidInvitePage(this.user, badLink, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -711,11 +740,15 @@ describe('ProjectInviteTests', function () {
       })
 
       describe('login workflow with valid token', function () {
+        beforeEach(function (done) {
+          this.user.ensureUserExists(done)
+        })
+
         it('should redirect to the register page', function (done) {
           Async.series(
             [
               cb => expectInviteRedirectToRegister(this.user, this.link, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -728,7 +761,7 @@ describe('ProjectInviteTests', function () {
               cb => expectLoginPage(this.user, cb),
               cb => expectLoginRedirectToInvite(this.user, this.link, cb),
               cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -741,8 +774,14 @@ describe('ProjectInviteTests', function () {
               cb => expectLoginPage(this.user, cb),
               cb => expectLoginRedirectToInvite(this.user, this.link, cb),
               cb => expectInvitePage(this.user, this.link, cb),
-              cb => expectAcceptInviteAndRedirect(this.user, this.invite, cb),
-              cb => expectProjectAccess(this.user, this.invite.projectId, cb),
+              cb =>
+                expectAcceptInviteAndRedirect(
+                  this.user,
+                  this.invite,
+                  this.projectId,
+                  cb
+                ),
+              cb => expectProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
@@ -754,28 +793,21 @@ describe('ProjectInviteTests', function () {
           Async.series(
             [
               cb => expectInviteRedirectToRegister(this.user, this.link, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )
         })
 
-        it('should show the invalid-invite page once the user has logged in', function (done) {
+        it('should show the invalid-invite page right away', function (done) {
           const badLink = this.link.replace(
             this.invite.token,
             'not_a_real_token'
           )
           Async.series(
             [
-              cb => {
-                return expectInviteRedirectToRegister(this.user, badLink, cb)
-              },
-              cb => {
-                return expectLoginPage(this.user, cb)
-              },
-              cb => expectLoginRedirectToInvite(this.user, badLink, cb),
               cb => expectInvalidInvitePage(this.user, badLink, cb),
-              cb => expectNoProjectAccess(this.user, this.invite.projectId, cb),
+              cb => expectNoProjectAccess(this.user, this.projectId, cb),
             ],
             done
           )

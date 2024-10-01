@@ -1,3 +1,4 @@
+// @ts-check
 'use strict'
 
 const _ = require('lodash')
@@ -6,40 +7,65 @@ const assert = require('check-types').assert
 const Blob = require('../blob')
 const FileData = require('./')
 const EagerStringFileData = require('./string_file_data')
-const TextOperation = require('../operation/text_operation')
+const EditOperation = require('../operation/edit_operation')
+const EditOperationBuilder = require('../operation/edit_operation_builder')
+
+/**
+ *  @import { BlobStore, ReadonlyBlobStore, RangesBlob, RawFileData, RawLazyStringFileData } from '../types'
+ */
 
 class LazyStringFileData extends FileData {
   /**
    * @param {string} hash
+   * @param {string | undefined} rangesHash
    * @param {number} stringLength
-   * @param {Array.<TextOperation>} [textOperations]
+   * @param {Array.<EditOperation>} [operations]
    * @see FileData
    */
-  constructor(hash, stringLength, textOperations) {
+  constructor(hash, rangesHash, stringLength, operations) {
     super()
     assert.match(hash, Blob.HEX_HASH_RX)
+    if (rangesHash) {
+      assert.match(rangesHash, Blob.HEX_HASH_RX)
+    }
     assert.greaterOrEqual(stringLength, 0)
-    assert.maybe.array.of.instance(textOperations, TextOperation)
+    assert.maybe.array.of.instance(operations, EditOperation)
 
     this.hash = hash
+    this.rangesHash = rangesHash
     this.stringLength = stringLength
-    this.textOperations = textOperations || []
+    this.operations = operations || []
   }
 
+  /**
+   * @param {RawLazyStringFileData} raw
+   * @returns {LazyStringFileData}
+   */
   static fromRaw(raw) {
     return new LazyStringFileData(
       raw.hash,
+      raw.rangesHash,
       raw.stringLength,
-      raw.textOperations && _.map(raw.textOperations, TextOperation.fromJSON)
+      raw.operations && _.map(raw.operations, EditOperationBuilder.fromJSON)
     )
   }
 
-  /** @inheritdoc */
+  /**
+   * @inheritdoc
+   * @returns {RawLazyStringFileData}
+   */
   toRaw() {
-    const raw = { hash: this.hash, stringLength: this.stringLength }
-    if (this.textOperations.length) {
-      raw.textOperations = _.map(this.textOperations, function (textOperation) {
-        return textOperation.toJSON()
+    /** @type RawLazyStringFileData */
+    const raw = {
+      hash: this.hash,
+      stringLength: this.stringLength,
+    }
+    if (this.rangesHash) {
+      raw.rangesHash = this.rangesHash
+    }
+    if (this.operations.length) {
+      raw.operations = _.map(this.operations, function (operation) {
+        return operation.toJSON()
       })
     }
     return raw
@@ -47,8 +73,14 @@ class LazyStringFileData extends FileData {
 
   /** @inheritdoc */
   getHash() {
-    if (this.textOperations.length) return null
+    if (this.operations.length) return null
     return this.hash
+  }
+
+  /** @inheritdoc */
+  getRangesHash() {
+    if (this.operations.length) return null
+    return this.rangesHash
   }
 
   /** @inheritdoc */
@@ -76,16 +108,33 @@ class LazyStringFileData extends FileData {
    * Get the cached text operations that are to be applied to this file to get
    * from the content with its last known hash to its latest content.
    *
-   * @return {Array.<TextOperation>}
+   * @return {Array.<EditOperation>}
    */
-  getTextOperations() {
-    return this.textOperations
+  getOperations() {
+    return this.operations
   }
 
-  /** @inheritdoc */
+  /**
+   * @inheritdoc
+   * @param {ReadonlyBlobStore} blobStore
+   * @returns {Promise<EagerStringFileData>}
+   */
   async toEager(blobStore) {
-    const content = await blobStore.getString(this.hash)
-    return new EagerStringFileData(computeContent(this.textOperations, content))
+    const [content, ranges] = await Promise.all([
+      blobStore.getString(this.hash),
+      this.rangesHash
+        ? /** @type {Promise<RangesBlob>} */ (
+            blobStore.getObject(this.rangesHash)
+          )
+        : Promise.resolve(undefined),
+    ])
+    const file = new EagerStringFileData(
+      content,
+      ranges?.comments,
+      ranges?.trackedChanges
+    )
+    applyOperations(this.operations, file)
+    return file
   }
 
   /** @inheritdoc */
@@ -95,37 +144,47 @@ class LazyStringFileData extends FileData {
 
   /** @inheritdoc */
   async toHollow() {
+    // TODO(das7pad): inline 2nd path of FileData.createLazyFromBlobs?
+    // @ts-ignore
     return FileData.createHollow(null, this.stringLength)
   }
 
-  /** @inheritdoc */
-  edit(textOperation) {
-    this.stringLength = textOperation.applyToLength(this.stringLength)
-    this.textOperations.push(textOperation)
+  /** @inheritdoc
+   * @param {EditOperation} operation
+   */
+  edit(operation) {
+    this.stringLength = operation.applyToLength(this.stringLength)
+    this.operations.push(operation)
   }
 
-  /** @inheritdoc */
+  /** @inheritdoc
+   * @param {BlobStore} blobStore
+   * @return {Promise<RawFileData>}
+   */
   async store(blobStore) {
-    if (this.textOperations.length === 0) {
-      return { hash: this.hash }
+    if (this.operations.length === 0) {
+      /** @type RawFileData */
+      const raw = { hash: this.hash }
+      if (this.rangesHash) {
+        raw.rangesHash = this.rangesHash
+      }
+      return raw
     }
-
-    const content = await blobStore.getString(this.hash)
-    const blob = await blobStore.putString(
-      computeContent(this.textOperations, content)
-    )
-    this.hash = blob.getHash()
-    this.stringLength = blob.getStringLength()
-    this.textOperations.length = 0
-    return { hash: this.hash }
+    const eager = await this.toEager(blobStore)
+    this.operations.length = 0
+    /** @type RawFileData */
+    return await eager.store(blobStore)
   }
 }
 
-function computeContent(textOperations, initialFile) {
-  function applyTextOperation(content, textOperation) {
-    return textOperation.apply(content)
-  }
-  return _.reduce(textOperations, applyTextOperation, initialFile)
+/**
+ *
+ * @param {EditOperation[]} operations
+ * @param {EagerStringFileData} file
+ * @returns {void}
+ */
+function applyOperations(operations, file) {
+  _.each(operations, operation => operation.apply(file))
 }
 
 module.exports = LazyStringFileData

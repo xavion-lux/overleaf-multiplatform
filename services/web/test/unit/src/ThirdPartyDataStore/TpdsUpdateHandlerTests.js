@@ -1,21 +1,13 @@
 const SandboxedModule = require('sandboxed-module')
 const sinon = require('sinon')
 const { expect } = require('chai')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const Errors = require('../../../../app/src/Features/Errors/Errors')
 
 const MODULE_PATH =
   '../../../../app/src/Features/ThirdPartyDataStore/TpdsUpdateHandler.js'
 
 describe('TpdsUpdateHandler', function () {
-  beforeEach(function () {
-    this.clock = sinon.useFakeTimers()
-  })
-
-  afterEach(function () {
-    this.clock.restore()
-  })
-
   beforeEach(function () {
     this.projectName = 'My recipes'
     this.projects = {
@@ -93,9 +85,7 @@ describe('TpdsUpdateHandler', function () {
       .withArgs(this.projects.archived2, this.userId)
       .returns(true)
     this.RootDocManager = {
-      promises: {
-        setRootDocAutomatically: sinon.stub().resolves(),
-      },
+      setRootDocAutomaticallyInBackground: sinon.stub(),
     }
     this.UpdateMerger = {
       promises: {
@@ -503,10 +493,8 @@ function expectProjectCreated() {
   })
 
   it('sets the root doc', function () {
-    // Fire pending timers
-    this.clock.next()
     expect(
-      this.RootDocManager.promises.setRootDocAutomatically
+      this.RootDocManager.setRootDocAutomaticallyInBackground
     ).to.have.been.calledWith(this.projects.active1._id)
   })
 }
@@ -518,9 +506,7 @@ function expectProjectNotCreated() {
   })
 
   it('does not set the root doc', function () {
-    // Fire pending timers
-    this.clock.next()
-    expect(this.RootDocManager.promises.setRootDocAutomatically).not.to.have
+    expect(this.RootDocManager.setRootDocAutomaticallyInBackground).not.to.have
       .been.called
   })
 }

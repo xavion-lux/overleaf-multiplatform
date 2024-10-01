@@ -1,3 +1,5 @@
+const { promisify } = require('util')
+const { promisifyMultiResult } = require('@overleaf/promise-utils')
 const Settings = require('@overleaf/settings')
 const Errors = require('./Errors')
 const Metrics = require('./Metrics')
@@ -99,7 +101,9 @@ function getDoc(projectId, docId, options = {}, _callback) {
         body.version,
         body.ranges,
         body.pathname,
-        body.projectHistoryId?.toString()
+        body.projectHistoryId?.toString(),
+        body.historyRangesSupport || false,
+        body.resolvedCommentIds || []
       )
     } else if (res.statusCode === 404) {
       callback(new Errors.NotFoundError(`doc not not found: ${urlPath}`))
@@ -174,4 +178,19 @@ function setDoc(
   )
 }
 
-module.exports = { getDoc, setDoc }
+module.exports = {
+  getDoc,
+  setDoc,
+  promises: {
+    getDoc: promisifyMultiResult(getDoc, [
+      'lines',
+      'version',
+      'ranges',
+      'pathname',
+      'projectHistoryId',
+      'historyRangesSupport',
+      'resolvedCommentIds',
+    ]),
+    setDoc: promisify(setDoc),
+  },
+}

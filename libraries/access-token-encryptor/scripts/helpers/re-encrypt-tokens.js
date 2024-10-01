@@ -1,4 +1,3 @@
-const { ReadPreference } = require('mongodb')
 const _ = require('lodash')
 const { formatTokenUsageStats } = require('./format-usage-stats')
 
@@ -11,7 +10,7 @@ const DRY_RUN = !process.argv.includes('--dry-run=false')
  * @return {Promise<string>}
  */
 async function reEncryptTokens(accessTokenEncryptor, encryptedJson) {
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     accessTokenEncryptor.decryptToJson(encryptedJson, (err, json) => {
       if (err) return reject(err)
       accessTokenEncryptor.encryptJson(json, (err, reEncryptedJson) => {
@@ -26,12 +25,14 @@ async function reEncryptTokens(accessTokenEncryptor, encryptedJson) {
  * @param {AccessTokenEncryptor} accessTokenEncryptor
  * @param {Collection} collection
  * @param {Object} paths
+ * @param {Object} queryOptions
  * @return {Promise<{}>}
  */
 async function reEncryptTokensInCollection({
   accessTokenEncryptor,
   collection,
   paths,
+  queryOptions,
 }) {
   const { collectionName } = collection
   const stats = {}
@@ -56,7 +57,7 @@ async function reEncryptTokensInCollection({
   const cursor = collection.find(
     {},
     {
-      readPreference: ReadPreference.secondaryPreferred,
+      ...queryOptions,
       projection,
     }
   )

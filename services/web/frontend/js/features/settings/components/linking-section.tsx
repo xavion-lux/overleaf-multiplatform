@@ -1,68 +1,55 @@
-import { useState, ElementType } from 'react'
-import { Alert } from 'react-bootstrap'
+import { ElementType } from 'react'
 import { useTranslation } from 'react-i18next'
 import importOverleafModules from '../../../../macros/import-overleaf-module.macro'
 import { useSSOContext, SSOSubscription } from '../context/sso-context'
 import { SSOLinkingWidget } from './linking/sso-widget'
 import getMeta from '../../../utils/meta'
 import { useBroadcastUser } from '@/shared/hooks/user-channel/use-broadcast-user'
-import { useSplitTestContext } from '@/shared/context/split-test-context'
+import OLNotification from '@/features/ui/components/ol/ol-notification'
+
+const availableIntegrationLinkingWidgets = importOverleafModules(
+  'integrationLinkingWidgets'
+) as any[]
+const availableReferenceLinkingWidgets = importOverleafModules(
+  'referenceLinkingWidgets'
+) as any[]
+const availableLangFeedbackLinkingWidgets = importOverleafModules(
+  'langFeedbackLinkingWidgets'
+) as any[]
 
 function LinkingSection() {
   useBroadcastUser()
   const { t } = useTranslation()
   const { subscriptions } = useSSOContext()
-  const ssoErrorMessage = getMeta('ol-ssoErrorMessage') as string
-  const projectSyncSuccessMessage = getMeta(
-    'ol-projectSyncSuccessMessage'
-  ) as string
-  const [integrationLinkingWidgets] = useState<any[]>(
-    () =>
-      getMeta('integrationLinkingWidgets') ||
-      importOverleafModules('integrationLinkingWidgets')
-  )
-  const [referenceLinkingWidgets] = useState<any[]>(
-    () =>
-      getMeta('referenceLinkingWidgets') ||
-      importOverleafModules('referenceLinkingWidgets')
-  )
-  const [langFeedbackLinkingWidgets] = useState<any[]>(
-    () =>
-      getMeta('langFeedbackLinkingWidgets') ||
-      importOverleafModules('langFeedbackLinkingWidgets')
-  )
+  const ssoErrorMessage = getMeta('ol-ssoErrorMessage')
+  const projectSyncSuccessMessage = getMeta('ol-projectSyncSuccessMessage')
+
+  // hide linking widgets in CI
+  const integrationLinkingWidgets = getMeta('ol-hideLinkingWidgets')
+    ? []
+    : availableIntegrationLinkingWidgets
+  const referenceLinkingWidgets = getMeta('ol-hideLinkingWidgets')
+    ? []
+    : availableReferenceLinkingWidgets
+  const langFeedbackLinkingWidgets = getMeta('ol-hideLinkingWidgets')
+    ? []
+    : availableLangFeedbackLinkingWidgets
 
   const oauth2ServerComponents = importOverleafModules('oauth2Server') as {
     import: { default: ElementType }
     path: string
   }[]
 
-  const showPersonalAccessTokenComponents: boolean =
-    getMeta('ol-showPersonalAccessToken') ||
-    getMeta('ol-optionalPersonalAccessToken')
+  const renderSyncSection =
+    getMeta('ol-isSaas') || getMeta('ol-gitBridgeEnabled')
 
-  const allIntegrationLinkingWidgets = showPersonalAccessTokenComponents
-    ? integrationLinkingWidgets.concat(oauth2ServerComponents)
-    : integrationLinkingWidgets
+  const allIntegrationLinkingWidgets = integrationLinkingWidgets.concat(
+    oauth2ServerComponents
+  )
 
-  // currently the only thing that is in the langFeedback section is writefull,
-  // which is behind a split test. we should hide this section if the user is not in the split test
-  // todo: remove split test check, and split test context after gradual rollout is complete
-  const {
-    splitTestVariants,
-  }: { splitTestVariants: Record<string, string | undefined> } =
-    useSplitTestContext()
-
-  // even if they arent in the split test, if they have it enabled let them toggle it off
-  const user = getMeta('ol-user')
-  const shouldLoadWritefull =
-    (splitTestVariants['writefull-integration'] === 'enabled' ||
-      user.writefull?.enabled === true) &&
-    !window.writefull // check if the writefull extension is installed, in which case we dont handle the integration
-
-  const haslangFeedbackLinkingWidgets =
-    langFeedbackLinkingWidgets.length && shouldLoadWritefull
-  const hasIntegrationLinkingSection = allIntegrationLinkingWidgets.length
+  const haslangFeedbackLinkingWidgets = langFeedbackLinkingWidgets.length
+  const hasIntegrationLinkingSection =
+    renderSyncSection && allIntegrationLinkingWidgets.length
   const hasReferencesLinkingSection = referenceLinkingWidgets.length
 
   // Filter out SSO providers that are not allowed to be linked by
@@ -96,11 +83,11 @@ function LinkingSection() {
 
   return (
     <>
-      <h3>{t('integrations')}</h3>
+      <h3 id="integrations">{t('integrations')}</h3>
       <p className="small">{t('linked_accounts_explained')}</p>
       {haslangFeedbackLinkingWidgets ? (
         <>
-          <h3 id="project-sync" className="text-capitalize">
+          <h3 id="language-feedback" className="text-capitalize">
             {t('language_feedback')}
           </h3>
           <div className="settings-widgets-container">
@@ -122,7 +109,10 @@ function LinkingSection() {
             {t('project_synchronisation')}
           </h3>
           {projectSyncSuccessMessage ? (
-            <Alert bsStyle="success">{projectSyncSuccessMessage}</Alert>
+            <OLNotification
+              type="success"
+              content={projectSyncSuccessMessage}
+            />
           ) : null}
           <div className="settings-widgets-container">
             {allIntegrationLinkingWidgets.map(
@@ -163,9 +153,10 @@ function LinkingSection() {
             {t('linked_accounts')}
           </h3>
           {ssoErrorMessage ? (
-            <Alert bsStyle="danger">
-              {t('sso_link_error')}: {ssoErrorMessage}
-            </Alert>
+            <OLNotification
+              type="error"
+              content={`${t('sso_link_error')}: ${ssoErrorMessage}`}
+            />
           ) : null}
           <div className="settings-widgets-container">
             {Object.values(subscriptions).map(
@@ -227,11 +218,6 @@ function SSOLinkingWidgetContainer({
       description = `${t('login_with_service', {
         service: subscription.provider.name,
       })}.`
-      break
-    case 'twitter':
-      description = t('login_with_service_will_stop_working_soon', {
-        service: subscription.provider.name,
-      })
       break
     case 'orcid':
       description = t('oauth_orcid_description')

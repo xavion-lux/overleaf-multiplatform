@@ -1,62 +1,47 @@
-/* eslint-disable
-    n/handle-callback-err,
-*/
-// TODO: This file was created by bulk-decaffeinate.
-// Fix any style issues and re-enable lint.
-/*
- * decaffeinate suggestions:
- * DS207: Consider shorter variations of null checks
- * Full docs: https://github.com/decaffeinate/decaffeinate/blob/master/docs/suggestions.md
- */
-let SystemMessageManager
 const { SystemMessage } = require('../../models/SystemMessage')
 const {
   addRequiredCleanupHandlerBeforeDrainingConnections,
 } = require('../../infrastructure/GracefulShutdown')
+const { callbackifyAll } = require('@overleaf/promise-utils')
+const logger = require('@overleaf/logger')
 
-module.exports = SystemMessageManager = {
-  getMessages(callback) {
-    if (callback == null) {
-      callback = function () {}
-    }
-    callback(null, this._cachedMessages)
+const SystemMessageManager = {
+  _cachedMessages: [],
+
+  getMessages() {
+    return this._cachedMessages
   },
 
-  getMessagesFromDB(callback) {
-    if (callback == null) {
-      callback = function () {}
-    }
-    SystemMessage.find({}, callback)
+  async getMessagesFromDB() {
+    return await SystemMessage.find({}).exec()
   },
 
-  clearMessages(callback) {
-    if (callback == null) {
-      callback = function () {}
-    }
-    SystemMessage.deleteMany({}, callback)
+  async clearMessages() {
+    await SystemMessage.deleteMany({}).exec()
+    await this.refreshCache()
   },
 
-  createMessage(content, callback) {
-    if (callback == null) {
-      callback = function () {}
-    }
+  async createMessage(content) {
     const message = new SystemMessage({ content })
-    message.save(callback)
+    await message.save()
+    await this.refreshCache()
   },
 
-  refreshCache() {
-    this.getMessagesFromDB((error, messages) => {
-      if (!error) {
-        this._cachedMessages = messages
-      }
+  async refreshCache() {
+    this._cachedMessages = await this.getMessagesFromDB()
+  },
+
+  refreshCacheInBackground() {
+    this.refreshCache().catch(err => {
+      logger.warn({ err }, 'failed to refresh system messages cache')
     })
   },
 }
 
 const CACHE_TIMEOUT = 10 * 1000 * (Math.random() + 2) // 20-30 seconds
-SystemMessageManager.refreshCache()
+SystemMessageManager.refreshCacheInBackground()
 const intervalHandle = setInterval(
-  () => SystemMessageManager.refreshCache(),
+  () => SystemMessageManager.refreshCacheInBackground(),
   CACHE_TIMEOUT
 )
 
@@ -66,3 +51,9 @@ addRequiredCleanupHandlerBeforeDrainingConnections(
     clearInterval(intervalHandle)
   }
 )
+
+module.exports = {
+  getMessages: SystemMessageManager.getMessages.bind(SystemMessageManager),
+  ...callbackifyAll(SystemMessageManager, { without: ['getMessages'] }),
+  promises: SystemMessageManager,
+}

@@ -9,7 +9,7 @@ footer.site-footer
 				else if !settings.nav.hide_powered_by
 					li
 						//- year of Server Pro release, static
-						| © 2023
+						| © 2024
 						|
 						a(href='https://www.overleaf.com/for/enterprises') Powered by Overleaf
 
@@ -33,7 +33,7 @@ footer.site-footer
 
 			ul.col-md-3.text-right
 				each item in nav.right_footer
-					li(ng-non-bindable)
+					li
 						if item.url
 							a(href=item.url, class=item.class, aria-label=item.label) !{item.text}
 						else

@@ -275,9 +275,13 @@ describe('ChunkTranslator', function () {
                 op: [
                   { i: '111 ', p: 0 },
                   { d: 'aa ', p: 4 },
-                  { i: '2222 ', p: 10 },
-                  { d: 'c', p: 15 },
-                  { i: 'd', p: 15 },
+                  // NOTE: The construction of TextOperation can merge an
+                  // insertion across a deletion operation, which is why this is
+                  // ever so slightly different from the textOperation defined
+                  // in the chunk. Both diffs represent the same change in
+                  // content.
+                  { i: '2222 d', p: 10 },
+                  { d: 'c', p: 16 },
                 ],
                 meta: {
                   users: [this.author1.id],
@@ -811,9 +815,7 @@ describe('ChunkTranslator', function () {
             },
             changes: [
               {
-                operations: [
-                  { pathname: 'main.tex', textOperation: [0, 'foo'] },
-                ],
+                operations: [{ pathname: 'main.tex', textOperation: ['foo'] }],
                 timestamp: this.date.toISOString(),
                 authors: [this.author1.id],
               },
@@ -1124,9 +1126,7 @@ describe('ChunkTranslator', function () {
             },
             changes: [
               {
-                operations: [
-                  { pathname: 'main.tex', textOperation: [0, 'foo'] },
-                ],
+                operations: [{ pathname: 'main.tex', textOperation: ['foo'] }],
                 timestamp: this.date.toISOString(),
                 authors: [this.author1.id],
               },
@@ -1136,9 +1136,7 @@ describe('ChunkTranslator', function () {
                 authors: [this.author1.id],
               },
               {
-                operations: [
-                  { pathname: 'other.tex', textOperation: [0, 'foo'] },
-                ],
+                operations: [{ pathname: 'other.tex', textOperation: ['foo'] }],
                 timestamp: this.date.toISOString(),
                 authors: [this.author1.id],
               },
@@ -1728,6 +1726,1186 @@ describe('ChunkTranslator', function () {
           done()
         }
         this.ChunkTranslator.convertToSummarizedUpdates(this.chunk, assertion)
+      })
+    })
+  })
+
+  describe('with tracked changes in a file', function () {
+    describe('convertToDiffUpdates', function () {
+      beforeEach(function () {
+        this.rangesHash = 'some_ranges_hash'
+        this.fileContents = 'Hello planet world, this is a test'
+        this.ranges = JSON.stringify({
+          trackedChanges: [
+            {
+              range: { pos: 6, length: 7 },
+              tracking: {
+                type: 'delete',
+                userId: this.author1.id,
+                ts: '2024-01-01T00:00:00.000Z',
+              },
+            },
+          ],
+        })
+        this.HistoryStoreManager.getProjectBlob
+          .withArgs(this.historyId, this.rangesHash)
+          .yields(null, this.ranges)
+        this.HistoryStoreManager.getProjectBlob
+          .withArgs(this.historyId, this.fileHash)
+          .yields(null, this.fileContents)
+      })
+
+      it('should filter out the tracked deletes that were present in the chunk', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        28, //    Hello [planet ]world, this is |a test
+                        -1, //    Hello [planet ]world, this is | test
+                        'the', // Hello [planet ]world, this is the| test
+                        5, //     Hello [planet ]world, this is the test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  { i: 'the', p: 21 },
+                  { d: 'a', p: 24 },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should filter out tracked deletes across multiple changes', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        28, //    Hello [planet ]world, this is |a test
+                        -1, //    Hello [planet ]world, this is | test
+                        'the', // Hello [planet ]world, this is the| test
+                        5, //     Hello [planet ]world, this is the test|
+                      ],
+                    },
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        22, //    Hello [planet ]world, th|is is the test
+                        -2, //    Hello [planet ]world, th| is the test
+                        'at', //  Hello [planet ]world, that| is the test
+                        12, //    Hello [planet ]world, that is the test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  { i: 'the', p: 21 },
+                  { d: 'a', p: 24 },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+              {
+                op: [
+                  { i: 'at', p: 15 },
+                  { d: 'is', p: 17 },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should handle tracked delete in the operation', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        5, //  Hello| [planet ]world, this is a test
+                        {
+                          r: 1,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: '2024-01-01T00:00:00.000Z',
+                          },
+                        }, //  Hello[ ]|[planet ]world, this is test
+                        7, //  Hello[ ][planet ]|world, this is the test
+                        {
+                          r: 5,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: '2024-01-01T00:00:00.000Z',
+                          },
+                        }, //  Hello[ ][planet ][world]|, this is the test
+                        18, // Hello[ ][planet ][world], this is the test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  { d: ' ', p: 5 },
+                  { d: 'world', p: 5 },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should filter out tracked deletes in insert operations', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        13, //  Hello [planet ]|world, this is a test
+                        {
+                          i: 'pluto',
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: '2024-01-01T00:00:00.000Z',
+                          },
+                        }, //  Hello [planet pluto]|world, this is a test
+                        21, // Hello [planet pluto]world, this is a test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should filter out tracked deletes in delete operations', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        6, //  Hello |[planet ]world, this is a test
+                        -3, // Hello [|net ]world, this is a test
+                        6, //  Hello [net ]wo|rld, this is a test
+                        -3, // Hello [net ]wo|, this is a test
+                        16, // Hello [net ]wo, this is a test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [{ d: 'rld', p: 8 }],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should filter out tracked deletes in retain operations', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        4, //  Hell|o [planet ]world, this is a test
+                        {
+                          r: 4,
+                          tracking: { type: 'none' },
+                        }, //  Hello pl|[anet ]world, this is a test
+                        {
+                          r: 3,
+                          tracking: {
+                            type: 'insert',
+                            userId: this.author1.id,
+                            ts: '2024-01-01T00:00:00.000Z',
+                          },
+                        }, //  Hello plane|[t ]world, this is a test
+                        23, // Hello plane[t ]world, this is a test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  {
+                    i: 'pl',
+                    p: 6,
+                  },
+                  {
+                    i: 'ane',
+                    p: 8,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should report tracked deletion (retains) as deletions', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    rangesHash: this.rangesHash,
+                    stringLength: 42,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        {
+                          r: 34,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: '2024-01-01T00:00:00.000Z',
+                          },
+                        }, //  [Hello planet world, this is a test]|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          1,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.initialContent).to.equal('Hello world, this is a test')
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  {
+                    d: 'Hello ',
+                    p: 0,
+                  },
+                  {
+                    d: 'world, this is a test',
+                    p: 0,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should properly create changes when deleting after moved track deletes', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    stringLength: 34,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // // He[ll]o planet world, this is a test
+                        2,
+                        {
+                          r: 2,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        30,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // {...} is a tracked insert
+                        // He[ll]o {TEST }planet world, this is a test
+                        6,
+                        {
+                          i: 'TEST ',
+                          tracking: {
+                            type: 'insert',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        28,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // {...} is a tracked insert
+                        // He[ll]o {TEST }planet world, [this] is a test
+                        25,
+                        {
+                          r: 4,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        10,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // {...} is a tracked insert
+                        2, // He|[ll]o {TEST }planet world, [this] is a test
+                        -2, // He|o {TEST }planet world, [this] is a test
+                        2, // Heo |{TEST }planet world, [this] is a test
+                        {
+                          r: 5,
+                          tracking: { type: 'none' },
+                        }, // Heo TEST| planet world, [this] is a test
+                        14, // Heo TEST planet world, |[this] is a test
+                        -4, // Heo TEST planet world, | is a test
+                        10, // Heo TEST planet world,  is a test|
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          4,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  {
+                    d: 'll',
+                    p: 2,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+              {
+                op: [
+                  {
+                    i: 'TEST ',
+                    p: 4,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 1,
+              },
+              {
+                op: [
+                  {
+                    d: 'this',
+                    p: 23,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 2,
+              },
+              {
+                op: [],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 3,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should properly create changes when retaining after moved track deletes', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    stringLength: 34,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // // He[ll]o planet world, this is a test
+                        2,
+                        {
+                          r: 2,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        30,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // He[ll]o planet world, [this] is a test
+                        20,
+                        {
+                          r: 4,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        10,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // {...} is a tracked insert
+                        // He[ll]o planet world, [this] {TEST }is a test
+                        25,
+                        {
+                          i: 'TEST ',
+                          tracking: {
+                            type: 'insert',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        9,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // {...} is a tracked insert
+                        2, // He|[ll]o planet world, [this] {TEST }is a test
+                        -2, // He|o planet world, [this] {TEST }is a test
+                        {
+                          r: 39,
+                          tracking: { type: 'none' },
+                        },
+                      ], // He|o planet world, this TEST is a test
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          4,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  {
+                    d: 'll',
+                    p: 2,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+              {
+                op: [
+                  {
+                    d: 'this',
+                    p: 18,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 1,
+              },
+              {
+                op: [
+                  {
+                    i: 'TEST ',
+                    p: 19,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 2,
+              },
+              {
+                op: [
+                  {
+                    i: 'this',
+                    p: 18,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 3,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      it('should handle deletion that starts before tracked delete', function (done) {
+        this.chunk = {
+          chunk: {
+            startVersion: 0,
+            history: {
+              snapshot: {
+                files: {
+                  'main.tex': {
+                    hash: this.fileHash,
+                    stringLength: 34,
+                  },
+                },
+              },
+              changes: [
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        // Hello planet world, [this] is a test
+                        20,
+                        {
+                          r: 4,
+                          tracking: {
+                            type: 'delete',
+                            userId: this.author1.id,
+                            ts: this.date.toISOString(),
+                          },
+                        },
+                        10,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+                {
+                  operations: [
+                    {
+                      pathname: 'main.tex',
+                      textOperation: [
+                        // [...] is a tracked delete
+                        5, // Hello| planet world, [this] is a test
+                        -25, // Hellotest
+                        4,
+                      ],
+                    },
+                  ],
+                  timestamp: this.date.toISOString(),
+                  authors: [this.author1.id],
+                },
+              ],
+            },
+          },
+          authors: [this.author1.id],
+        }
+
+        this.ChunkTranslator.convertToDiffUpdates(
+          this.projectId,
+          this.chunk,
+          'main.tex',
+          0,
+          2,
+          (error, diff) => {
+            expect(error).to.be.null
+            expect(diff.updates).to.deep.equal([
+              {
+                op: [
+                  {
+                    d: 'this',
+                    p: 20,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 0,
+              },
+              {
+                op: [
+                  {
+                    d: ' planet world, ',
+                    p: 5,
+                  },
+                  {
+                    d: ' is a ',
+                    p: 5,
+                  },
+                ],
+                meta: {
+                  users: [this.author1.id],
+                  start_ts: this.date.getTime(),
+                  end_ts: this.date.getTime(),
+                },
+                v: 1,
+              },
+            ])
+            done()
+          }
+        )
+      })
+
+      describe('whith multiple tracked deletes', function () {
+        beforeEach(function () {
+          this.fileContents = 'Hello planet world universe, this is a test'
+          this.ranges = JSON.stringify({
+            trackedChanges: [
+              {
+                range: { pos: 6, length: 7 },
+                tracking: {
+                  type: 'delete',
+                  userId: this.author1.id,
+                  ts: '2024-01-01T00:00:00.000Z',
+                },
+              },
+              {
+                range: { pos: 18, length: 9 },
+                tracking: {
+                  type: 'delete',
+                  userId: this.author1.id,
+                  ts: '2024-01-01T00:00:00.000Z',
+                },
+              },
+            ],
+          })
+          this.HistoryStoreManager.getProjectBlob
+            .withArgs(this.historyId, this.rangesHash)
+            .yields(null, this.ranges)
+          this.HistoryStoreManager.getProjectBlob
+            .withArgs(this.historyId, this.fileHash)
+            .yields(null, this.fileContents)
+        })
+
+        it('should handle a deletion that spans multiple tracked deletes', function (done) {
+          this.chunk = {
+            chunk: {
+              startVersion: 0,
+              history: {
+                snapshot: {
+                  files: {
+                    'main.tex': {
+                      hash: this.fileHash,
+                      rangesHash: this.rangesHash,
+                      stringLength: this.fileContents.length,
+                    },
+                  },
+                },
+                changes: [
+                  {
+                    operations: [
+                      {
+                        pathname: 'main.tex',
+                        textOperation: [
+                          // [...] is a tracked delete
+                          6, // Hello |[planet ]world[ universe], this is a test
+                          -21, // Hello|, this is a test
+                          16,
+                        ],
+                      },
+                    ],
+                    timestamp: this.date.toISOString(),
+                    authors: [this.author1.id],
+                  },
+                ],
+              },
+            },
+            authors: [this.author1.id],
+          }
+
+          this.ChunkTranslator.convertToDiffUpdates(
+            this.projectId,
+            this.chunk,
+            'main.tex',
+            0,
+            1,
+            (error, diff) => {
+              expect(error).to.be.null
+              expect(diff.updates).to.deep.equal([
+                {
+                  op: [
+                    {
+                      d: 'world',
+                      p: 6,
+                    },
+                  ],
+                  meta: {
+                    users: [this.author1.id],
+                    start_ts: this.date.getTime(),
+                    end_ts: this.date.getTime(),
+                  },
+                  v: 0,
+                },
+              ])
+              done()
+            }
+          )
+        })
+
+        it('should handle a tracked deletion that spans multiple tracked deletes', function (done) {
+          this.chunk = {
+            chunk: {
+              startVersion: 0,
+              history: {
+                snapshot: {
+                  files: {
+                    'main.tex': {
+                      hash: this.fileHash,
+                      rangesHash: this.rangesHash,
+                      stringLength: this.fileContents.length,
+                    },
+                  },
+                },
+                changes: [
+                  {
+                    operations: [
+                      {
+                        pathname: 'main.tex',
+                        textOperation: [
+                          // [...] is a tracked delete
+                          6, // Hello |[planet ]world[ universe], this is a test
+                          {
+                            r: 21,
+                            tracking: {
+                              type: 'delete',
+                              userId: this.author1.id,
+                              ts: '2024-01-01T00:00:00.000Z',
+                            },
+                          }, // Hello [planet world universe]|, this is a test
+                          16,
+                        ],
+                      },
+                    ],
+                    timestamp: this.date.toISOString(),
+                    authors: [this.author1.id],
+                  },
+                ],
+              },
+            },
+            authors: [this.author1.id],
+          }
+
+          this.ChunkTranslator.convertToDiffUpdates(
+            this.projectId,
+            this.chunk,
+            'main.tex',
+            0,
+            1,
+            (error, diff) => {
+              expect(error).to.be.null
+              expect(diff.updates).to.deep.equal([
+                {
+                  op: [
+                    {
+                      d: 'world',
+                      p: 6,
+                    },
+                  ],
+                  meta: {
+                    users: [this.author1.id],
+                    start_ts: this.date.getTime(),
+                    end_ts: this.date.getTime(),
+                  },
+                  v: 0,
+                },
+              ])
+              done()
+            }
+          )
+        })
       })
     })
   })

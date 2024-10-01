@@ -1,6 +1,13 @@
 const { db } = require('../../../app/src/infrastructure/mongodb')
 const { expect } = require('chai')
+const Settings = require('@overleaf/settings')
 const User = require('./helpers/User').promises
+const MockHaveIBeenPwnedApiClass = require('./mocks/MockHaveIBeenPwnedApi')
+
+let MockHaveIBeenPwnedApi
+before(function () {
+  MockHaveIBeenPwnedApi = MockHaveIBeenPwnedApiClass.instance()
+})
 
 describe('Captcha', function () {
   let user
@@ -50,12 +57,20 @@ describe('Captcha', function () {
     expect(body).to.deep.equal({ redir: '/project' })
   }
 
+  function expectSuccessfulLoginWithRedirectToCompromisedPasswordPage(
+    response,
+    body
+  ) {
+    expect(response.statusCode).to.equal(200)
+    expect(body).to.deep.equal({ redir: '/compromised-password' })
+  }
+
   function expectBadLogin(response, body) {
     expect(response.statusCode).to.equal(401)
     expect(body).to.deep.equal({
       message: {
-        text: 'Your email or password is incorrect. Please try again.',
         type: 'error',
+        key: 'invalid-password-retry-or-reset',
       },
     })
   }
@@ -83,6 +98,7 @@ describe('Captcha', function () {
     expect(auditLog[0].info).to.deep.equal({
       captcha: 'solved',
       method: 'Password login',
+      fromKnownDevice: false,
     })
   })
 
@@ -109,6 +125,7 @@ describe('Captcha', function () {
       expect(auditLog[1].info).to.deep.equal({
         captcha: 'skipped',
         method: 'Password login',
+        fromKnownDevice: true,
       })
     })
 
@@ -190,6 +207,52 @@ describe('Captcha', function () {
       it('should have rolled out the initial users email', async function () {
         const { response, body } = await loginWithCaptcha('')
         expectBadCaptchaResponse(response, body)
+      })
+    })
+
+    describe('HIBP', function () {
+      before(function () {
+        Settings.apis.haveIBeenPwned.enabled = true
+      })
+      after(function () {
+        Settings.apis.haveIBeenPwned.enabled = false
+      })
+      beforeEach(async function () {
+        user = new User()
+        user.password = 'aLeakedPassword42'
+        await user.ensureUserExists()
+      })
+      beforeEach('login to populate deviceHistory', async function () {
+        const { response, body } = await loginWithCaptcha('valid')
+        expectSuccessfulLogin(response, body)
+      })
+      beforeEach(function () {
+        // echo -n aLeakedPassword42 | sha1sum
+        MockHaveIBeenPwnedApi.addPasswordByHash(
+          'D1ABBDEEE70CBE8BBCE5D9D039C53C0CE91C0C16'
+        )
+      })
+      it('should be able to skip HIBP check with deviceHistory and valid captcha', async function () {
+        const { response, body } = await loginWithCaptcha('valid')
+        expectSuccessfulLoginWithRedirectToCompromisedPasswordPage(
+          response,
+          body
+        )
+      })
+
+      it('should be able to skip HIBP check with deviceHistory and skipped captcha', async function () {
+        const { response, body } = await loginWithCaptcha('')
+        expectSuccessfulLoginWithRedirectToCompromisedPasswordPage(
+          response,
+          body
+        )
+      })
+
+      it('should not be able to skip HIBP check without deviceHistory', async function () {
+        user.resetCookies()
+        const { response, body } = await loginWithCaptcha('valid')
+        expect(response.statusCode).to.equal(400)
+        expect(body.message.key).to.equal('password-compromised')
       })
     })
   })

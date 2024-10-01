@@ -16,7 +16,7 @@ import EditorWatchdogManager from '@/features/ide-react/connection/editor-watchd
 import { useIdeReactContext } from '@/features/ide-react/context/ide-react-context'
 import { useConnectionContext } from '@/features/ide-react/context/connection-context'
 import { debugConsole } from '@/utils/debugging'
-import { Document } from '@/features/ide-react/editor/document'
+import { DocumentContainer } from '@/features/ide-react/editor/document-container'
 import { useLayoutContext } from '@/shared/context/layout-context'
 import { GotoLineOptions } from '@/features/ide-react/types/goto-line-options'
 import { Doc } from '../../../../../types/doc'
@@ -30,6 +30,8 @@ import useEventListener from '@/shared/hooks/use-event-listener'
 import { EditorType } from '@/features/ide-react/editor/types/editor-type'
 import { DocId } from '../../../../../types/project-settings'
 import { Update } from '@/features/history/services/types/update'
+import { useDebugDiffTracker } from '../hooks/use-debug-diff-tracker'
+import { useEditorContext } from '@/shared/context/editor-context'
 
 interface GotoOffsetOptions {
   gotoOffset: number
@@ -40,12 +42,13 @@ interface OpenDocOptions
     Partial<GotoOffsetOptions> {
   gotoOffset?: number
   forceReopen?: boolean
+  keepCurrentView?: boolean
 }
 
 export type EditorManager = {
   getEditorType: () => EditorType | null
   showSymbolPalette: boolean
-  currentDocument: Document
+  currentDocument: DocumentContainer
   currentDocumentId: DocId | null
   getCurrentDocValue: () => string | null
   getCurrentDocId: () => DocId | null
@@ -60,6 +63,7 @@ export type EditorManager = {
   setWantTrackChanges: React.Dispatch<
     React.SetStateAction<EditorManager['wantTrackChanges']>
   >
+  debugTimers: React.MutableRefObject<Record<string, number>>
 }
 
 function hasGotoLine(options: OpenDocOptions): options is GotoLineOptions {
@@ -73,7 +77,7 @@ function hasGotoOffset(options: OpenDocOptions): options is GotoOffsetOptions {
 export type EditorScopeValue = {
   showSymbolPalette: false
   toggleSymbolPalette: () => void
-  sharejs_doc: Document | null
+  sharejs_doc: DocumentContainer | null
   open_doc_id: string | null
   open_doc_name: string | null
   opening: boolean
@@ -84,13 +88,16 @@ export type EditorScopeValue = {
   error_state: boolean
 }
 
-const EditorManagerContext = createContext<EditorManager | undefined>(undefined)
+export const EditorManagerContext = createContext<EditorManager | undefined>(
+  undefined
+)
 
 export const EditorManagerProvider: FC = ({ children }) => {
   const { t } = useTranslation()
   const ide = useIdeContext()
   const { projectId } = useIdeReactContext()
   const { reportError, eventEmitter, eventLog } = useIdeReactContext()
+  const { setOutOfSync } = useEditorContext()
   const { socket, disconnect, connectionState } = useConnectionContext()
   const { view, setView } = useLayoutContext()
   const { showGenericMessageModal, genericModalVisible, showOutOfSyncModal } =
@@ -101,7 +108,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
   )
   const [showVisual] = useScopeValue<boolean>('editor.showVisual')
   const [currentDocument, setCurrentDocument] =
-    useScopeValue<Document>('editor.sharejs_doc')
+    useScopeValue<DocumentContainer>('editor.sharejs_doc')
   const [openDocId, setOpenDocId] = useScopeValue<DocId | null>(
     'editor.open_doc_id'
   )
@@ -126,12 +133,32 @@ export const EditorManagerProvider: FC = ({ children }) => {
 
   const [ignoringExternalUpdates, setIgnoringExternalUpdates] = useState(false)
 
+  const { createDebugDiff, debugTimers } = useDebugDiffTracker(
+    projectId,
+    currentDocument
+  )
+
   const [globalEditorWatchdogManager] = useState(
     () =>
       new EditorWatchdogManager({
         onTimeoutHandler: (meta: Record<string, any>) => {
-          sendMB('losing-edits', meta)
-          reportError('losing-edits', meta)
+          let diffSize: number | null = null
+          createDebugDiff()
+            .then(calculatedDiffSize => {
+              diffSize = calculatedDiffSize
+            })
+            .finally(() => {
+              sendMB('losing-edits', {
+                ...meta,
+                diffSize,
+                timers: debugTimers.current,
+              })
+              reportError('losing-edits', {
+                ...meta,
+                diffSize,
+                timers: debugTimers.current,
+              })
+            })
         },
       })
   )
@@ -140,7 +167,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
   // prevents circular dependencies in useCallbacks
   const [docError, setDocError] = useState<{
     doc: Doc
-    document: Document
+    document: DocumentContainer
     error: Error | string
     meta?: Record<string, any>
     editorContent?: string
@@ -225,12 +252,12 @@ export const EditorManagerProvider: FC = ({ children }) => {
     [goToLineEmitter]
   )
 
-  const unbindFromDocumentEvents = (document: Document) => {
+  const unbindFromDocumentEvents = (document: DocumentContainer) => {
     document.off()
   }
 
   const attachErrorHandlerToDocument = useCallback(
-    (doc: Doc, document: Document) => {
+    (doc: Doc, document: DocumentContainer) => {
       document.on(
         'error',
         (
@@ -246,7 +273,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
   )
 
   const bindToDocumentEvents = useCallback(
-    (doc: Doc, document: Document) => {
+    (doc: Doc, document: DocumentContainer) => {
       attachErrorHandlerToDocument(doc, document)
 
       document.on('externalUpdate', (update: Update) => {
@@ -256,6 +283,12 @@ export const EditorManagerProvider: FC = ({ children }) => {
         if (
           update.meta.type === 'external' &&
           update.meta.source === 'git-bridge'
+        ) {
+          return
+        }
+        if (
+          update.meta.origin?.kind === 'file-restore' ||
+          update.meta.origin?.kind === 'project-restore'
         ) {
           return
         }
@@ -276,7 +309,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
   const syncTimeoutRef = useRef<number | null>(null)
 
   const syncTrackChangesState = useCallback(
-    (doc: Document) => {
+    (doc: DocumentContainer) => {
       if (!doc) {
         return
       }
@@ -310,7 +343,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
 
   const doOpenNewDocument = useCallback(
     (doc: Doc) =>
-      new Promise<Document>((resolve, reject) => {
+      new Promise<DocumentContainer>((resolve, reject) => {
         debugConsole.log('[doOpenNewDocument] Opening...')
         const newDocument = openDocs.getDocument(doc._id)
         if (!newDocument) {
@@ -344,7 +377,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
   )
 
   const openNewDocument = useCallback(
-    async (doc: Doc): Promise<Document> => {
+    async (doc: Doc): Promise<DocumentContainer> => {
       // Leave the current document
       //  - when we are opening a different new one, to avoid race conditions
       //     between leaving and joining the same document
@@ -390,6 +423,11 @@ export const EditorManagerProvider: FC = ({ children }) => {
     [attachErrorHandlerToDocument, doOpenNewDocument, currentDocument]
   )
 
+  const openDocIdRef = useRef(openDocId)
+  useEffect(() => {
+    openDocIdRef.current = openDocId
+  }, [openDocId])
+
   const openDoc = useCallback(
     async (doc: Doc, options: OpenDocOptions = {}) => {
       debugConsole.log(`[openDoc] Opening ${doc._id}`)
@@ -397,11 +435,16 @@ export const EditorManagerProvider: FC = ({ children }) => {
         // store position of previous doc before switching docs
         eventEmitter.emit('store-doc-position')
       }
-      setView('editor')
+
+      if (!options.keepCurrentView) {
+        setView('editor')
+      }
 
       const done = (isNewDoc: boolean) => {
         window.dispatchEvent(
-          new CustomEvent('doc:after-opened', { detail: isNewDoc })
+          new CustomEvent('doc:after-opened', {
+            detail: { isNewDoc, docId: doc._id },
+          })
         )
         if (hasGotoLine(options)) {
           window.setTimeout(() => jumpToLine(options))
@@ -421,15 +464,16 @@ export const EditorManagerProvider: FC = ({ children }) => {
         }
       }
 
-      // If we already have the document open we can return at this point.
+      // If we already have the document open, or are opening the document, we can return at this point.
       // Note: only use forceReopen:true to override this when the document is
       // out of sync and needs to be reloaded from the server.
-      if (doc._id === openDocId && !options.forceReopen) {
+      if (doc._id === openDocIdRef.current && !options.forceReopen) {
         done(false)
         return
       }
 
       // We're now either opening a new document or reloading a broken one.
+      openDocIdRef.current = doc._id as DocId
       setOpenDocId(doc._id as DocId)
       setOpenDocName(doc.name)
       setOpening(true)
@@ -458,7 +502,6 @@ export const EditorManagerProvider: FC = ({ children }) => {
     [
       eventEmitter,
       jumpToLine,
-      openDocId,
       openNewDocument,
       setCurrentDocument,
       setOpenDocId,
@@ -498,17 +541,21 @@ export const EditorManagerProvider: FC = ({ children }) => {
     if (docError) {
       const { doc, document, error, meta } = docError
       let { editorContent } = docError
-      const message = typeof error === 'string' ? error : error?.message ?? ''
+      const message = typeof error === 'string' ? error : (error?.message ?? '')
 
       // Clear document error so that it's only handled once
       setDocError(null)
 
       if (message.includes('maxDocLength')) {
         openDoc(doc, { forceReopen: true })
-        showGenericMessageModal(
-          t('document_too_long'),
-          t('document_too_long_detail')
-        )
+        const hasTrackedDeletes =
+          document.ranges != null &&
+          document.ranges.changes.some(change => 'd' in change.op)
+        const explanation = hasTrackedDeletes
+          ? `${t('document_too_long_detail')} ${t('document_too_long_tracked_deletes')}`
+          : t('document_too_long_detail')
+
+        showGenericMessageModal(t('document_too_long'), explanation)
         setDocTooLongErrorShown(true)
       } else if (/too many comments or tracked changes/.test(message)) {
         showGenericMessageModal(
@@ -537,6 +584,9 @@ export const EditorManagerProvider: FC = ({ children }) => {
 
         // Tell the user about the error state.
         setIsInErrorState(true)
+        // Ensure that the editor is locked
+        setOutOfSync(true)
+        // Display the "out of sync" modal
         showOutOfSyncModal(editorContent || '')
 
         // Do not forceReopen the document.
@@ -563,6 +613,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
     setIsInErrorState,
     showGenericMessageModal,
     showOutOfSyncModal,
+    setOutOfSync,
     t,
   ])
 
@@ -611,6 +662,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
       jumpToLine,
       wantTrackChanges,
       setWantTrackChanges,
+      debugTimers,
     }),
     [
       getEditorType,
@@ -628,6 +680,7 @@ export const EditorManagerProvider: FC = ({ children }) => {
       jumpToLine,
       wantTrackChanges,
       setWantTrackChanges,
+      debugTimers,
     ]
   )
 

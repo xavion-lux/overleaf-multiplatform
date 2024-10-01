@@ -38,6 +38,7 @@ describe('HistoryController', function () {
         '../Project/ProjectEntityUpdateHandler':
           (this.ProjectEntityUpdateHandler = {}),
         '../User/UserGetter': (this.UserGetter = {}),
+        '../Project/ProjectGetter': (this.ProjectGetter = {}),
         './RestoreManager': (this.RestoreManager = {}),
         '../../infrastructure/Features': (this.Features = sinon
           .stub()
@@ -232,7 +233,7 @@ describe('HistoryController', function () {
     describe('for a project without project-history enabled', function () {
       beforeEach(function () {
         this.project_id = 'mock-project-id'
-        this.req = { params: { Project_id: this.project_id } }
+        this.req = { params: { Project_id: this.project_id }, body: {} }
         this.res = { setTimeout: sinon.stub(), sendStatus: sinon.stub() }
         this.next = sinon.stub()
 
@@ -256,7 +257,7 @@ describe('HistoryController', function () {
     describe('for a project with project-history enabled', function () {
       beforeEach(function () {
         this.project_id = 'mock-project-id'
-        this.req = { params: { Project_id: this.project_id } }
+        this.req = { params: { Project_id: this.project_id }, body: {} }
         this.res = { setTimeout: sinon.stub(), sendStatus: sinon.stub() }
         this.next = sinon.stub()
 

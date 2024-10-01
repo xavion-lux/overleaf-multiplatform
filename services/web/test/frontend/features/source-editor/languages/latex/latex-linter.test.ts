@@ -220,42 +220,42 @@ describe('LatexLinter', function () {
 
   it('should accept \\url|...|', function () {
     const { errors } = Parse(
-      'this is text \\url|http://www.sharelatex.com/| and more\n'
+      'this is text \\url|http://www.overleaf.com/| and more\n'
     )
     assert.equal(errors.length, 0)
   })
 
   it('should accept \\url{...}', function () {
     const { errors } = Parse(
-      'this is text \\url{http://www.sharelatex.com/} and more\n'
+      'this is text \\url{http://www.overleaf.com/} and more\n'
     )
     assert.equal(errors.length, 0)
   })
 
   it('should accept \\url{...} with % chars', function () {
     const { errors } = Parse(
-      'this is text \\url{http://www.sharelatex.com/hello%20world} and more\n'
+      'this is text \\url{http://www.overleaf.com/hello%20world} and more\n'
     )
     assert.equal(errors.length, 0)
   })
 
   it('should accept \\href{...}{...}', function () {
     const { errors } = Parse(
-      'this is text \\href{http://www.sharelatex.com/}{test} and more\n'
+      'this is text \\href{http://www.overleaf.com/}{test} and more\n'
     )
     assert.equal(errors.length, 0)
   })
 
   it('should accept \\href{...}{...} with dollarsign in url', function () {
     const { errors } = Parse(
-      'this is text \\href{http://www.sharelatex.com/foo=$bar}{test} and more\n'
+      'this is text \\href{http://www.overleaf.com/foo=$bar}{test} and more\n'
     )
     assert.equal(errors.length, 0)
   })
 
   it('should not accept \\href|...|{...}', function () {
     const { errors } = Parse(
-      'this is text \\href|http://www.sharelatex.com|{test} and more\n'
+      'this is text \\href|http://www.overleaf.com|{test} and more\n'
     )
     assert.equal(errors.length, 1)
     assert.equal(errors[0].text, 'invalid href command')
@@ -264,7 +264,7 @@ describe('LatexLinter', function () {
 
   it('should catch error in text argument of \\href{...}{...}', function () {
     const { errors } = Parse(
-      'this is text \\href{http://www.sharelatex.com/foo=$bar}{i have made an $error} and more\n'
+      'this is text \\href{http://www.overleaf.com/foo=$bar}{i have made an $error} and more\n'
     )
     assert.equal(errors.length, 2)
     assert.equal(errors[0].text, 'unclosed $ found at close group }')
@@ -492,6 +492,23 @@ describe('LatexLinter', function () {
     const { errors } = Parse('{\\hyperref{}{}{fig411}')
     assert.equal(errors.length, 1)
     assert.equal(errors[0].text, 'unclosed group {')
+  })
+
+  it('should accept documentclass with no options', function () {
+    const { errors } = Parse('\\documentclass{article}')
+    assert.equal(errors.length, 0)
+  })
+
+  it('should accept documentclass with options', function () {
+    const { errors } = Parse('\\documentclass[a4paper]{article}')
+    assert.equal(errors.length, 0)
+  })
+
+  it('should accept documentclass with underscore in options', function () {
+    const { errors } = Parse(
+      '\\documentclass[my_custom_document_class_option]{my-custom-class}'
+    )
+    assert.equal(errors.length, 0)
   })
 
   // %novalidate

@@ -18,7 +18,9 @@ const ProjectLocator = require('../Project/ProjectLocator')
 const Settings = require('@overleaf/settings')
 const logger = require('@overleaf/logger')
 const _ = require('lodash')
+const AnalyticsManager = require('../../../../app/src/Features/Analytics/AnalyticsManager')
 const LinkedFilesHandler = require('./LinkedFilesHandler')
+
 const {
   CompileFailedError,
   UrlFetchFailedError,
@@ -80,6 +82,7 @@ module.exports = LinkedFilesController = {
     }
 
     data.provider = provider
+    data.importedAt = new Date().toISOString()
 
     return Agent.createLinkedFile(
       projectId,
@@ -90,6 +93,15 @@ module.exports = LinkedFilesController = {
       function (err, newFileId) {
         if (err != null) {
           return LinkedFilesController.handleError(err, req, res, next)
+        }
+        if (name.endsWith('.bib')) {
+          AnalyticsManager.recordEventForUserInBackground(
+            userId,
+            'linked-bib-file',
+            {
+              integration: provider,
+            }
+          )
         }
         return res.json({ new_file_id: newFileId })
       }
@@ -124,6 +136,8 @@ module.exports = LinkedFilesController = {
         if (Agent == null) {
           return res.sendStatus(400)
         }
+
+        linkedFileData.importedAt = new Date().toISOString()
 
         Agent.refreshLinkedFile(
           projectId,

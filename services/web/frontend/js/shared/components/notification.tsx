@@ -1,3 +1,5 @@
+// to be kept in sync with app/views/_mixins/notification.pug
+
 import classNames from 'classnames'
 import React, { ReactElement, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,17 +12,19 @@ export type NotificationType =
   | 'error'
   | 'offer'
 
-type NotificationProps = {
+export type NotificationProps = {
   action?: React.ReactElement
   ariaLive?: 'polite' | 'off' | 'assertive'
   className?: string
-  content: React.ReactElement | string
-  customIcon?: React.ReactElement
+  content: React.ReactNode
+  customIcon?: React.ReactElement | null
+  disclaimer?: React.ReactElement | string
   isDismissible?: boolean
   isActionBelowContent?: boolean
   onDismiss?: () => void
   title?: string
   type: NotificationType
+  id?: string
 }
 
 function NotificationIcon({
@@ -52,11 +56,13 @@ function Notification({
   className = '',
   content,
   customIcon,
+  disclaimer,
   isActionBelowContent,
   isDismissible,
   onDismiss,
   title,
   type,
+  id,
 }: NotificationProps) {
   type = type || 'info'
   const { t } = useTranslation()
@@ -74,6 +80,8 @@ function Notification({
     if (onDismiss) onDismiss()
   }
 
+  // return null
+
   if (!show) {
     return null
   }
@@ -83,8 +91,11 @@ function Notification({
       className={notificationClassName}
       aria-live={ariaLive || 'off'}
       role="alert"
+      id={id}
     >
-      <NotificationIcon notificationType={type} customIcon={customIcon} />
+      {customIcon !== null && (
+        <NotificationIcon notificationType={type} customIcon={customIcon} />
+      )}
 
       <div className="notification-content-and-cta">
         <div className="notification-content">
@@ -96,6 +107,9 @@ function Notification({
           {content}
         </div>
         {action && <div className="notification-cta">{action}</div>}
+        {disclaimer && (
+          <div className="notification-disclaimer">{disclaimer}</div>
+        )}
       </div>
 
       {isDismissible && (

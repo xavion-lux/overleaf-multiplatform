@@ -17,18 +17,12 @@ if (process.env.BACKEND == null) {
       process.env.AWS_S3_USER_FILES_BUCKET_NAME
     process.env.TEMPLATE_FILES_BUCKET_NAME =
       process.env.AWS_S3_TEMPLATE_FILES_BUCKET_NAME
-    process.env.PUBLIC_FILES_BUCKET_NAME =
-      process.env.AWS_S3_PUBLIC_FILES_BUCKET_NAME
   } else {
     process.env.BACKEND = 'fs'
     process.env.USER_FILES_BUCKET_NAME = Path.join(__dirname, '../user_files')
     process.env.TEMPLATE_FILES_BUCKET_NAME = Path.join(
       __dirname,
       '../template_files'
-    )
-    process.env.PUBLIC_FILES_BUCKET_NAME = Path.join(
-      __dirname,
-      '../public_files'
     )
   }
 }
@@ -37,7 +31,7 @@ const settings = {
   internal: {
     filestore: {
       port: 3009,
-      host: process.env.LISTEN_ADDRESS || 'localhost',
+      host: process.env.LISTEN_ADDRESS || '127.0.0.1',
     },
   },
 
@@ -62,19 +56,16 @@ const settings = {
       signedUrlExpiryInMs: parseInt(process.env.LINK_EXPIRY_TIMEOUT || 60000),
     },
 
-    s3:
-      process.env.AWS_ACCESS_KEY_ID || process.env.S3_BUCKET_CREDENTIALS
-        ? {
-            key: process.env.AWS_ACCESS_KEY_ID,
-            secret: process.env.AWS_SECRET_ACCESS_KEY,
-            endpoint: process.env.AWS_S3_ENDPOINT,
-            pathStyle: process.env.AWS_S3_PATH_STYLE,
-            partSize: process.env.AWS_S3_PARTSIZE || 100 * 1024 * 1024,
-            bucketCreds: process.env.S3_BUCKET_CREDENTIALS
-              ? JSON.parse(process.env.S3_BUCKET_CREDENTIALS)
-              : undefined,
-          }
+    s3: {
+      key: process.env.AWS_ACCESS_KEY_ID,
+      secret: process.env.AWS_SECRET_ACCESS_KEY,
+      endpoint: process.env.AWS_S3_ENDPOINT,
+      pathStyle: process.env.AWS_S3_PATH_STYLE,
+      partSize: process.env.AWS_S3_PARTSIZE || 100 * 1024 * 1024,
+      bucketCreds: process.env.S3_BUCKET_CREDENTIALS
+        ? JSON.parse(process.env.S3_BUCKET_CREDENTIALS)
         : undefined,
+    },
 
     // GCS should be configured by the service account on the kubernetes pod. See GOOGLE_APPLICATION_CREDENTIALS,
     // which will be picked up automatically.
@@ -82,7 +73,6 @@ const settings = {
     stores: {
       user_files: process.env.USER_FILES_BUCKET_NAME,
       template_files: process.env.TEMPLATE_FILES_BUCKET_NAME,
-      public_files: process.env.PUBLIC_FILES_BUCKET_NAME,
     },
 
     fallback: process.env.FALLBACK_BACKEND
@@ -112,6 +102,9 @@ const settings = {
   sentry: {
     dsn: process.env.SENTRY_DSN,
   },
+
+  gracefulShutdownDelayInMs:
+    parseInt(process.env.GRACEFUL_SHUTDOWN_DELAY_SECONDS ?? '30', 10) * 1000,
 }
 
 // Filestore health check

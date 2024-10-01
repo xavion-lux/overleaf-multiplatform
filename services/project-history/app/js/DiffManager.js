@@ -9,7 +9,7 @@ import * as WebApiManager from './WebApiManager.js'
 import * as ChunkTranslator from './ChunkTranslator.js'
 import * as Errors from './Errors.js'
 
-let MAX_CHUNK_REQUESTS = 5
+let MAX_CHUNK_REQUESTS = 10
 
 /**
  * Container for functions that need to be mocked in tests
@@ -37,7 +37,18 @@ export function getDiff(projectId, pathname, fromVersion, toVersion, callback) {
         if (binary) {
           diff = { binary: true }
         } else {
-          diff = DiffGenerator.buildDiff(initialContent, updates)
+          try {
+            diff = DiffGenerator.buildDiff(initialContent, updates)
+          } catch (err) {
+            return callback(
+              OError.tag(err, 'failed to build diff', {
+                projectId,
+                pathname,
+                fromVersion,
+                toVersion,
+              })
+            )
+          }
         }
         callback(null, diff)
       }

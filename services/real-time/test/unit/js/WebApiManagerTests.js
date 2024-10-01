@@ -60,17 +60,16 @@ describe('WebApiManager', function () {
         return this.request.post
           .calledWith({
             url: `${this.settings.apis.web.url}/project/${this.project_id}/join`,
-            qs: {
-              user_id: this.user_id,
-            },
             auth: {
               user: this.settings.apis.web.user,
               pass: this.settings.apis.web.pass,
               sendImmediately: true,
             },
-            json: true,
+            json: {
+              userId: this.user_id,
+              anonymousAccessToken: undefined,
+            },
             jar: false,
-            headers: {},
           })
           .should.equal(true)
       })
@@ -88,6 +87,61 @@ describe('WebApiManager', function () {
             }
           )
           .should.equal(true)
+      })
+    })
+
+    describe('with anon user', function () {
+      beforeEach(function () {
+        this.user_id = 'anonymous-user'
+        this.token = 'a-ro-token'
+        this.user = {
+          _id: this.user_id,
+          anonymousAccessToken: this.token,
+        }
+        this.response = {
+          project: { name: 'Test project' },
+          privilegeLevel: 'readOnly',
+          isRestrictedUser: true,
+          isTokenMember: false,
+          isInvitedMember: false,
+        }
+        this.request.post = sinon
+          .stub()
+          .yields(null, { statusCode: 200 }, this.response)
+        this.WebApiManager.joinProject(
+          this.project_id,
+          this.user,
+          this.callback
+        )
+      })
+
+      it('should send a request to web to join the project', function () {
+        this.request.post.should.have.been.calledWith({
+          url: `${this.settings.apis.web.url}/project/${this.project_id}/join`,
+          auth: {
+            user: this.settings.apis.web.user,
+            pass: this.settings.apis.web.pass,
+            sendImmediately: true,
+          },
+          json: {
+            userId: this.user_id,
+            anonymousAccessToken: this.token,
+          },
+          jar: false,
+        })
+      })
+
+      it('should return the project, privilegeLevel, and restricted flag', function () {
+        this.callback.should.have.been.calledWith(
+          null,
+          this.response.project,
+          this.response.privilegeLevel,
+          {
+            isRestrictedUser: this.response.isRestrictedUser,
+            isTokenMember: this.response.isTokenMember,
+            isInvitedMember: this.response.isInvitedMember,
+          }
+        )
       })
     })
 

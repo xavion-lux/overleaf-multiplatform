@@ -9,9 +9,9 @@ import * as ProjectHistoryClient from './helpers/ProjectHistoryClient.js'
 import * as ProjectHistoryApp from './helpers/ProjectHistoryApp.js'
 const { ObjectId } = mongodb
 
-const MockHistoryStore = () => nock('http://localhost:3100')
-const MockFileStore = () => nock('http://localhost:3009')
-const MockWeb = () => nock('http://localhost:3000')
+const MockHistoryStore = () => nock('http://127.0.0.1:3100')
+const MockFileStore = () => nock('http://127.0.0.1:3009')
+const MockWeb = () => nock('http://127.0.0.1:3000')
 
 // Some helper methods to make the tests more compact
 function slTextUpdate(historyId, doc, userId, v, ts, op) {
@@ -30,10 +30,11 @@ function slTextUpdate(historyId, doc, userId, v, ts, op) {
   }
 }
 
-function slAddDocUpdate(historyId, doc, userId, ts, docLines) {
+function slAddDocUpdate(historyId, doc, userId, ts, docLines, ranges = {}) {
   return {
     projectHistoryId: historyId,
     pathname: doc.pathname,
+    ranges,
     docLines,
     doc: doc.id,
     meta: { user_id: userId, ts: ts.getTime() },
@@ -46,9 +47,10 @@ function slAddDocUpdateWithVersion(
   userId,
   ts,
   docLines,
-  projectVersion
+  projectVersion,
+  ranges = {}
 ) {
-  const result = slAddDocUpdate(historyId, doc, userId, ts, docLines)
+  const result = slAddDocUpdate(historyId, doc, userId, ts, docLines, ranges)
   result.version = projectVersion
   return result
 }
@@ -57,8 +59,9 @@ function slAddFileUpdate(historyId, file, userId, ts, projectId) {
   return {
     projectHistoryId: historyId,
     pathname: file.pathname,
-    url: `http://localhost:3009/project/${projectId}/file/${file.id}`,
+    url: `http://127.0.0.1:3009/project/${projectId}/file/${file.id}`,
     file: file.id,
+    ranges: undefined,
     meta: { user_id: userId, ts: ts.getTime() },
   }
 }
@@ -73,19 +76,12 @@ function slRenameUpdate(historyId, doc, userId, ts, pathname, newPathname) {
   }
 }
 
-function olTextUpdate(doc, userId, ts, textOperation, v) {
+function olUpdate(doc, userId, ts, operations, v) {
   return {
     v2Authors: [userId],
     timestamp: ts.toJSON(),
     authors: [],
-
-    operations: [
-      {
-        pathname: doc.pathname.replace(/^\//, ''), // Strip leading /
-        textOperation,
-      },
-    ],
-
+    operations,
     v2DocVersions: {
       [doc.id]: {
         pathname: doc.pathname.replace(/^\//, ''), // Strip leading /
@@ -95,26 +91,33 @@ function olTextUpdate(doc, userId, ts, textOperation, v) {
   }
 }
 
-function olTextUpdates(doc, userId, ts, textOperations, v) {
+function olTextOperation(doc, textOperation) {
   return {
-    v2Authors: [userId],
-    timestamp: ts.toJSON(),
-    authors: [],
-
-    operations: textOperations.map(textOperation => ({
-      // Strip leading /
-      pathname: doc.pathname.replace(/^\//, ''),
-
-      textOperation,
-    })),
-
-    v2DocVersions: {
-      [doc.id]: {
-        pathname: doc.pathname.replace(/^\//, ''), // Strip leading /
-        v: v || 1,
-      },
-    },
+    pathname: doc.pathname.replace(/^\//, ''), // Strip leading /
+    textOperation,
   }
+}
+
+function olAddCommentOperation(doc, commentId, pos, length) {
+  return {
+    pathname: doc.pathname.replace(/^\//, ''), // Strip leading /
+    commentId,
+    ranges: [{ pos, length }],
+  }
+}
+
+function olTextUpdate(doc, userId, ts, textOperation, v) {
+  return olUpdate(doc, userId, ts, [olTextOperation(doc, textOperation)], v)
+}
+
+function olTextUpdates(doc, userId, ts, textOperations, v) {
+  return olUpdate(
+    doc,
+    userId,
+    ts,
+    textOperations.map(textOperation => olTextOperation(doc, textOperation)),
+    v
+  )
 }
 
 function olRenameUpdate(doc, userId, ts, pathname, newPathname) {
@@ -132,8 +135,8 @@ function olRenameUpdate(doc, userId, ts, pathname, newPathname) {
   }
 }
 
-function olAddDocUpdate(doc, userId, ts, fileHash) {
-  return {
+function olAddDocUpdate(doc, userId, ts, fileHash, rangesHash = undefined) {
+  const update = {
     v2Authors: [userId],
     timestamp: ts.toJSON(),
     authors: [],
@@ -147,10 +150,21 @@ function olAddDocUpdate(doc, userId, ts, fileHash) {
       },
     ],
   }
+  if (rangesHash) {
+    update.operations[0].file.rangesHash = rangesHash
+  }
+  return update
 }
 
-function olAddDocUpdateWithVersion(doc, userId, ts, fileHash, version) {
-  const result = olAddDocUpdate(doc, userId, ts, fileHash)
+function olAddDocUpdateWithVersion(
+  doc,
+  userId,
+  ts,
+  fileHash,
+  version,
+  rangesHash = undefined
+) {
+  const result = olAddDocUpdate(doc, userId, ts, fileHash, rangesHash)
   result.projectVersion = version
   return result
 }
@@ -271,6 +285,115 @@ describe('Sending Updates', function () {
           assert(
             createBlob.isDone(),
             '/api/projects/:historyId/blobs/:hash should have been called'
+          )
+          assert(
+            addFile.isDone(),
+            `/api/projects/${historyId}/changes should have been called`
+          )
+          done()
+        }
+      )
+    })
+
+    it('should send ranges to the history store', function (done) {
+      const fileHash = '49e886093b3eacbc12b99a1eb5aeaa44a6b9d90e'
+      const rangesHash = 'fa9a429ff518bc9e5b2507a96ff0646b566eca65'
+
+      const historyRanges = {
+        trackedChanges: [
+          {
+            range: { pos: 4, length: 3 },
+            tracking: {
+              type: 'delete',
+              userId: 'user-id-1',
+              ts: '2024-01-01T00:00:00.000Z',
+            },
+          },
+        ],
+        comments: [
+          {
+            ranges: [{ pos: 0, length: 3 }],
+            id: 'comment-id-1',
+          },
+        ],
+      }
+
+      // We need to set up the ranges mock first, as we will call it last..
+      const createRangesBlob = MockHistoryStore()
+        .put(`/api/projects/${historyId}/blobs/${rangesHash}`, historyRanges)
+        .reply(201)
+
+      const createBlob = MockHistoryStore()
+        .put(`/api/projects/${historyId}/blobs/${fileHash}`, 'foo barbaz')
+        .reply(201)
+
+      const addFile = MockHistoryStore()
+        .post(`/api/projects/${historyId}/legacy_changes`, body => {
+          expect(body).to.deep.equal([
+            olAddDocUpdate(
+              this.doc,
+              this.userId,
+              this.timestamp,
+              fileHash,
+              rangesHash
+            ),
+          ])
+          return true
+        })
+        .query({ end_version: 0 })
+        .reply(204)
+
+      async.series(
+        [
+          cb => {
+            ProjectHistoryClient.pushRawUpdate(
+              this.projectId,
+              slAddDocUpdate(
+                historyId,
+                this.doc,
+                this.userId,
+                this.timestamp,
+                'foo barbaz',
+                {
+                  changes: [
+                    {
+                      op: { p: 4, d: 'bar' },
+                      metadata: {
+                        ts: 1704067200000,
+                        user_id: 'user-id-1',
+                      },
+                    },
+                  ],
+                  comments: [
+                    {
+                      op: {
+                        p: 0,
+                        c: 'foo',
+                        t: 'comment-id-1',
+                      },
+                      metadata: { resolved: false },
+                    },
+                  ],
+                }
+              ),
+              cb
+            )
+          },
+          cb => {
+            ProjectHistoryClient.flushProject(this.projectId, cb)
+          },
+        ],
+        error => {
+          if (error) {
+            return done(error)
+          }
+          assert(
+            createBlob.isDone(),
+            '/api/projects/:historyId/blobs/:hash should have been called to create content blob'
+          )
+          assert(
+            createRangesBlob.isDone(),
+            '/api/projects/:historyId/blobs/:hash should have been called to create ranges blob'
           )
           assert(
             addFile.isDone(),
@@ -594,11 +717,21 @@ describe('Sending Updates', function () {
       )
     })
 
-    it('should ignore comment ops', function (done) {
+    it('should handle comment ops', function (done) {
       const createChange = MockHistoryStore()
         .post(`/api/projects/${historyId}/legacy_changes`, body => {
           expect(body).to.deep.equal([
-            olTextUpdate(this.doc, this.userId, this.timestamp, [3, '\nc', 2]),
+            olUpdate(this.doc, this.userId, this.timestamp, [
+              olTextOperation(this.doc, [3, '\nc', 2]),
+              olAddCommentOperation(this.doc, 'comment-id-1', 3, 2),
+            ]),
+            olUpdate(
+              this.doc,
+              this.userId,
+              this.timestamp,
+              [olAddCommentOperation(this.doc, 'comment-id-2', 2, 1)],
+              2
+            ),
           ])
           return true
         })
@@ -618,7 +751,7 @@ describe('Sending Updates', function () {
                 this.timestamp,
                 [
                   { p: 3, i: '\nc' },
-                  { p: 3, c: '\nc' },
+                  { p: 3, c: '\nc', t: 'comment-id-1' },
                 ]
               ),
               cb
@@ -633,7 +766,7 @@ describe('Sending Updates', function () {
                 this.userId,
                 2,
                 this.timestamp,
-                [{ p: 2, c: 'b' }]
+                [{ p: 2, c: 'b', t: 'comment-id-2' }]
               ),
               cb
             )

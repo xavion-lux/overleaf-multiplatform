@@ -21,7 +21,11 @@ export class EndDocumentWidget extends WidgetType {
     return true
   }
 
-  updateDOM(): boolean {
-    return true
+  coordsAt(element: HTMLElement) {
+    return element.getBoundingClientRect()
+  }
+
+  get estimatedHeight() {
+    return 30
   }
 }

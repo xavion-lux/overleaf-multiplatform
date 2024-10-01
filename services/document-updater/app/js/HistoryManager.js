@@ -1,12 +1,12 @@
-let HistoryManager
 const async = require('async')
 const logger = require('@overleaf/logger')
+const { promisifyAll } = require('@overleaf/promise-utils')
 const request = require('request')
 const Settings = require('@overleaf/settings')
 const ProjectHistoryRedisManager = require('./ProjectHistoryRedisManager')
 const metrics = require('./Metrics')
 
-module.exports = HistoryManager = {
+const HistoryManager = {
   // flush changes in the background
   flushProjectChangesAsync(projectId) {
     HistoryManager.flushProjectChanges(
@@ -93,7 +93,14 @@ module.exports = HistoryManager = {
 
   MAX_PARALLEL_REQUESTS: 4,
 
-  resyncProjectHistory(projectId, projectHistoryId, docs, files, callback) {
+  resyncProjectHistory(
+    projectId,
+    projectHistoryId,
+    docs,
+    files,
+    opts,
+    callback
+  ) {
     ProjectHistoryRedisManager.queueResyncProjectStructure(
       projectId,
       projectHistoryId,
@@ -109,6 +116,7 @@ module.exports = HistoryManager = {
             projectId,
             doc.doc,
             doc.path,
+            opts,
             cb
           )
         }
@@ -122,3 +130,12 @@ module.exports = HistoryManager = {
     )
   },
 }
+
+module.exports = HistoryManager
+module.exports.promises = promisifyAll(HistoryManager, {
+  without: [
+    'flushProjectChangesAsync',
+    'recordAndFlushHistoryOps',
+    'shouldFlushHistoryOps',
+  ],
+})

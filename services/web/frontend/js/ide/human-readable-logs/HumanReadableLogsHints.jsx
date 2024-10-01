@@ -3,9 +3,10 @@ import {
   packageSuggestionsForCommands,
   packageSuggestionsForEnvironments,
 } from './HumanReadableLogsPackageSuggestions'
+import getMeta from '@/utils/meta'
 
 function WikiLink({ url, children }) {
-  if (window.wikiEnabled) {
+  if (getMeta('ol-wikiEnabled')) {
     return (
       <a href={url} target="_blank" rel="noopener">
         {children}
@@ -260,7 +261,7 @@ const hints = {
       <>
         The compiler cannot find the file you want to include. Make sure that
         you have{' '}
-        <WikiLink url="https://www.overleaf.com/learn/Including_images_in_ShareLaTeX">
+        <WikiLink url="https://www.overleaf.com/learn/how-to/Including_images_on_Overleaf">
           uploaded the file
         </WikiLink>{' '}
         and{' '}
@@ -428,7 +429,7 @@ const hints = {
       <>
         You have used a \\ or \newline command where LaTeX was not expecting
         one. Make sure that you only use line breaks after blocks of text, and
-        be careful using linebreaks inside lists and other environments.\
+        be careful using linebreaks inside lists and other environments.
       </>
     ),
   },
@@ -507,7 +508,7 @@ const hints = {
   },
 }
 
-if (!window.wikiEnabled) {
+if (!getMeta('ol-wikiEnabled')) {
   Object.keys(hints).forEach(ruleId => {
     hints[ruleId].extraInfoURL = null
   })

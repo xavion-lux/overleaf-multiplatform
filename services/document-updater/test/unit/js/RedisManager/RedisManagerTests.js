@@ -1,18 +1,19 @@
 const sinon = require('sinon')
-const modulePath = '../../../../app/js/RedisManager.js'
+const { expect } = require('chai')
 const SandboxedModule = require('sandboxed-module')
 const Errors = require('../../../../app/js/Errors')
 const crypto = require('crypto')
 const tk = require('timekeeper')
 
+const MODULE_PATH = '../../../../app/js/RedisManager.js'
+
 describe('RedisManager', function () {
   beforeEach(function () {
-    this.multi = { exec: sinon.stub() }
-    this.rclient = { multi: () => this.multi }
+    this.multi = { exec: sinon.stub().yields() }
+    this.rclient = { multi: () => this.multi, srem: sinon.stub().yields() }
     tk.freeze(new Date())
-    this.RedisManager = SandboxedModule.require(modulePath, {
+    this.RedisManager = SandboxedModule.require(MODULE_PATH, {
       requires: {
-        './ProjectHistoryRedisManager': (this.ProjectHistoryRedisManager = {}),
         '@overleaf/settings': (this.settings = {
           documentupdater: { logHashErrors: { write: true, read: true } },
           redis: {
@@ -54,6 +55,9 @@ describe('RedisManager', function () {
                 projectState({ project_id: projectId }) {
                   return `ProjectState:${projectId}`
                 },
+                projectBlock({ project_id: projectId }) {
+                  return `ProjectBlock:${projectId}`
+                },
                 unflushedTime({ doc_id: docId }) {
                   return `UnflushedTime:${docId}`
                 },
@@ -62,6 +66,12 @@ describe('RedisManager', function () {
                 },
                 lastUpdatedAt({ doc_id: docId }) {
                   return `lastUpdatedAt:${docId}`
+                },
+                historyRangesSupport() {
+                  return 'HistoryRangesSupport'
+                },
+                resolvedCommentIds({ doc_id: docId }) {
+                  return `ResolvedCommentIds:${docId}`
                 },
               },
             },
@@ -91,6 +101,7 @@ describe('RedisManager', function () {
     this.docId = 'doc-id-123'
     this.project_id = 'project-id-123'
     this.projectHistoryId = '123'
+    this.historyRangesSupport = false
     this.callback = sinon.stub()
   })
 
@@ -108,6 +119,7 @@ describe('RedisManager', function () {
         .update(this.jsonlines, 'utf8')
         .digest('hex')
       this.ranges = { comments: 'mock', entries: 'mock' }
+      this.resolvedCommentIds = ['comment-1']
       this.json_ranges = JSON.stringify(this.ranges)
       this.unflushed_time = 12345
       this.pathname = '/a/b/c.tex'
@@ -123,6 +135,14 @@ describe('RedisManager', function () {
           this.projectHistoryId.toString(),
           this.unflushed_time,
         ])
+      this.rclient.sismember = sinon.stub()
+      this.rclient.sismember
+        .withArgs('HistoryRangesSupport', this.docId)
+        .yields(null, 0)
+      this.rclient.smembers = sinon.stub()
+      this.rclient.smembers
+        .withArgs(`ResolvedCommentIds:${this.docId}`)
+        .yields(null, this.resolvedCommentIds)
     })
 
     describe('successfully', function () {
@@ -148,19 +168,19 @@ describe('RedisManager', function () {
       })
 
       it('should return the document', function () {
-        this.callback
-          .calledWithExactly(
-            null,
-            this.lines,
-            this.version,
-            this.ranges,
-            this.pathname,
-            this.projectHistoryId,
-            this.unflushed_time,
-            this.lastUpdatedAt,
-            this.lastUpdatedBy
-          )
-          .should.equal(true)
+        this.callback.should.have.been.calledWithExactly(
+          null,
+          this.lines,
+          this.version,
+          this.ranges,
+          this.pathname,
+          this.projectHistoryId,
+          this.unflushed_time,
+          this.lastUpdatedAt,
+          this.lastUpdatedBy,
+          this.historyRangesSupport,
+          this.resolvedCommentIds
+        )
       })
 
       it('should not log any errors', function () {
@@ -245,6 +265,31 @@ describe('RedisManager', function () {
         this.callback
           .calledWith(sinon.match.instanceOf(Errors.NotFoundError))
           .should.equal(true)
+      })
+    })
+
+    describe('with history ranges support', function () {
+      beforeEach(function () {
+        this.rclient.sismember
+          .withArgs('HistoryRangesSupport', this.docId)
+          .yields(null, 1)
+        this.RedisManager.getDoc(this.project_id, this.docId, this.callback)
+      })
+
+      it('should return the document with the history ranges flag set', function () {
+        this.callback.should.have.been.calledWithExactly(
+          null,
+          this.lines,
+          this.version,
+          this.ranges,
+          this.pathname,
+          this.projectHistoryId,
+          this.unflushed_time,
+          this.lastUpdatedAt,
+          this.lastUpdatedBy,
+          true,
+          this.resolvedCommentIds
+        )
       })
     })
   })
@@ -362,6 +407,18 @@ describe('RedisManager', function () {
           .should.equal(true)
       })
 
+      it('should send details for metrics', function () {
+        this.callback.should.have.been.calledWith(
+          sinon.match({
+            info: {
+              firstVersionInRedis: this.first_version_in_redis,
+              version: this.version,
+              ttlInS: this.RedisManager.DOC_OPS_TTL,
+            },
+          })
+        )
+      })
+
       it('should log out the problem as a debug message', function () {
         this.logger.debug.called.should.equal(true)
       })
@@ -437,13 +494,6 @@ describe('RedisManager', function () {
           null,
           null,
         ])
-      this.ProjectHistoryRedisManager.queueOps = sinon
-        .stub()
-        .callsArgWith(
-          this.ops.length + 1,
-          null,
-          this.project_update_list_length
-        )
     })
 
     describe('with a consistent version', function () {
@@ -514,16 +564,8 @@ describe('RedisManager', function () {
           .should.equal(true)
       })
 
-      it('should push the updates into the project history ops list', function () {
-        this.ProjectHistoryRedisManager.queueOps
-          .calledWith(this.project_id, JSON.stringify(this.ops[0]))
-          .should.equal(true)
-      })
-
       it('should call the callback', function () {
-        this.callback
-          .calledWith(null, this.project_update_list_length)
-          .should.equal(true)
+        this.callback.should.have.been.called
       })
 
       it('should not log any errors', function () {
@@ -547,16 +589,8 @@ describe('RedisManager', function () {
           )
         })
 
-        it('should push the updates into the project history ops list', function () {
-          this.ProjectHistoryRedisManager.queueOps
-            .calledWith(this.project_id, JSON.stringify(this.ops[0]))
-            .should.equal(true)
-        })
-
-        it('should call the callback with the project update count only', function () {
-          this.callback
-            .calledWith(null, this.project_update_list_length)
-            .should.equal(true)
+        it('should call the callback', function () {
+          this.callback.should.have.been.called
         })
       })
     })
@@ -614,10 +648,6 @@ describe('RedisManager', function () {
 
       it('should not try to enqueue doc updates', function () {
         this.multi.rpush.called.should.equal(false)
-      })
-
-      it('should not try to enqueue project updates', function () {
-        this.ProjectHistoryRedisManager.queueOps.called.should.equal(false)
       })
 
       it('should still set the doclines', function () {
@@ -765,7 +795,11 @@ describe('RedisManager', function () {
 
   describe('putDocInMemory', function () {
     beforeEach(function () {
-      this.rclient.mset = sinon.stub().yields(null)
+      this.multi.mset = sinon.stub()
+      this.multi.sadd = sinon.stub()
+      this.multi.del = sinon.stub()
+      this.multi.exists = sinon.stub()
+      this.multi.exec.onCall(0).yields(null, [0])
       this.rclient.sadd = sinon.stub().yields()
       this.lines = ['one', 'two', 'three', 'これは']
       this.version = 42
@@ -774,6 +808,7 @@ describe('RedisManager', function () {
         .update(JSON.stringify(this.lines), 'utf8')
         .digest('hex')
       this.ranges = { comments: 'mock', entries: 'mock' }
+      this.resolvedCommentIds = ['comment-1']
       this.pathname = '/a/b/c.tex'
     })
 
@@ -785,14 +820,16 @@ describe('RedisManager', function () {
           this.lines,
           this.version,
           this.ranges,
+          this.resolvedCommentIds,
           this.pathname,
           this.projectHistoryId,
+          this.historyRangesSupport,
           done
         )
       })
 
       it('should set all the details in a single MSET call', function () {
-        this.rclient.mset
+        this.multi.mset
           .calledWith({
             [`doclines:${this.docId}`]: JSON.stringify(this.lines),
             [`ProjectId:${this.docId}`]: this.project_id,
@@ -806,13 +843,26 @@ describe('RedisManager', function () {
       })
 
       it('should add the docId to the project set', function () {
-        this.rclient.sadd
+        this.multi.sadd
           .calledWith(`DocsIn:${this.project_id}`, this.docId)
           .should.equal(true)
       })
 
       it('should not log any errors', function () {
         this.logger.error.calledWith().should.equal(false)
+      })
+
+      it('should remove the document from the HistoryRangesSupport set in Redis', function () {
+        this.rclient.srem.should.have.been.calledWith(
+          'HistoryRangesSupport',
+          this.docId
+        )
+      })
+
+      it('should not store the resolved comments in Redis', function () {
+        this.multi.sadd.should.not.have.been.calledWith(
+          `ResolvedCommentIds:${this.docId}`
+        )
       })
     })
 
@@ -824,24 +874,24 @@ describe('RedisManager', function () {
           this.lines,
           this.version,
           {},
+          [],
           this.pathname,
           this.projectHistoryId,
+          this.historyRangesSupport,
           done
         )
       })
 
       it('should unset ranges', function () {
-        this.rclient.mset
-          .calledWith({
-            [`doclines:${this.docId}`]: JSON.stringify(this.lines),
-            [`ProjectId:${this.docId}`]: this.project_id,
-            [`DocVersion:${this.docId}`]: this.version,
-            [`DocHash:${this.docId}`]: this.hash,
-            [`Ranges:${this.docId}`]: null,
-            [`Pathname:${this.docId}`]: this.pathname,
-            [`ProjectHistoryId:${this.docId}`]: this.projectHistoryId,
-          })
-          .should.equal(true)
+        this.multi.mset.should.have.been.calledWith({
+          [`doclines:${this.docId}`]: JSON.stringify(this.lines),
+          [`ProjectId:${this.docId}`]: this.project_id,
+          [`DocVersion:${this.docId}`]: this.version,
+          [`DocHash:${this.docId}`]: this.hash,
+          [`Ranges:${this.docId}`]: null,
+          [`Pathname:${this.docId}`]: this.pathname,
+          [`ProjectHistoryId:${this.docId}`]: this.projectHistoryId,
+        })
       })
     })
 
@@ -856,8 +906,10 @@ describe('RedisManager', function () {
           this.lines,
           this.version,
           this.ranges,
+          this.resolvedCommentIds,
           this.pathname,
           this.projectHistoryId,
+          this.historyRangesSupport,
           this.callback
         )
       })
@@ -888,8 +940,10 @@ describe('RedisManager', function () {
           this.lines,
           this.version,
           this.ranges,
+          this.resolvedCommentIds,
           this.pathname,
           this.projectHistoryId,
+          this.historyRangesSupport,
           this.callback
         )
       })
@@ -902,6 +956,70 @@ describe('RedisManager', function () {
         this.callback
           .calledWith(sinon.match.instanceOf(Error))
           .should.equal(true)
+      })
+    })
+
+    describe('with history ranges support', function () {
+      beforeEach(function (done) {
+        this.historyRangesSupport = true
+        this.RedisManager.putDocInMemory(
+          this.project_id,
+          this.docId,
+          this.lines,
+          this.version,
+          this.ranges,
+          this.resolvedCommentIds,
+          this.pathname,
+          this.projectHistoryId,
+          this.historyRangesSupport,
+          done
+        )
+      })
+
+      it('should add the document to the HistoryRangesSupport set in Redis', function () {
+        this.rclient.sadd.should.have.been.calledWith(
+          'HistoryRangesSupport',
+          this.docId
+        )
+      })
+
+      it('should store the resolved comments in Redis', function () {
+        this.multi.del.should.have.been.calledWith(
+          `ResolvedCommentIds:${this.docId}`
+        )
+        this.multi.sadd.should.have.been.calledWith(
+          `ResolvedCommentIds:${this.docId}`,
+          ...this.resolvedCommentIds
+        )
+      })
+    })
+
+    describe('when the project is blocked', function () {
+      beforeEach(function (done) {
+        this.multi.exec.onCall(0).yields(null, [1])
+        this.RedisManager.putDocInMemory(
+          this.project_id,
+          this.docId,
+          this.lines,
+          this.version,
+          this.ranges,
+          this.resolvedCommentIds,
+          this.pathname,
+          this.projectHistoryId,
+          this.historyRangesSupport,
+          err => {
+            this.error = err
+            done()
+          }
+        )
+      })
+
+      it('should throw an error', function () {
+        expect(this.error.message).to.equal('Project blocked from loading docs')
+      })
+
+      it('should not store the doc', function () {
+        expect(this.multi.mset).to.not.have.been.called
       })
     })
   })
@@ -931,7 +1049,8 @@ describe('RedisManager', function () {
           `ProjectHistoryId:${this.docId}`,
           `UnflushedTime:${this.docId}`,
           `lastUpdatedAt:${this.docId}`,
-          `lastUpdatedBy:${this.docId}`
+          `lastUpdatedBy:${this.docId}`,
+          `ResolvedCommentIds:${this.docId}`
         )
         .should.equal(true)
     })
@@ -940,6 +1059,13 @@ describe('RedisManager', function () {
       this.multi.srem
         .calledWith(`DocsIn:${this.project_id}`, this.docId)
         .should.equal(true)
+    })
+
+    it('should remove the docId from the HistoryRangesSupport set', function () {
+      this.rclient.srem.should.have.been.calledWith(
+        'HistoryRangesSupport',
+        this.docId
+      )
     })
   })
 
@@ -972,9 +1098,6 @@ describe('RedisManager', function () {
         this.RedisManager.getDoc = sinon
           .stub()
           .callsArgWith(2, null, 'lines', 'version')
-        this.ProjectHistoryRedisManager.queueRenameEntity = sinon
-          .stub()
-          .yields()
         this.RedisManager.renameDoc(
           this.project_id,
           this.docId,
@@ -997,9 +1120,6 @@ describe('RedisManager', function () {
         this.RedisManager.getDoc = sinon
           .stub()
           .callsArgWith(2, null, null, null)
-        this.ProjectHistoryRedisManager.queueRenameEntity = sinon
-          .stub()
-          .yields()
         this.RedisManager.renameDoc(
           this.project_id,
           this.docId,

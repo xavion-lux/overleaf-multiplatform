@@ -1,6 +1,6 @@
 const { callbackify } = require('util')
 const pLimit = require('p-limit')
-const { ObjectId } = require('mongodb')
+const { ObjectId } = require('mongodb-legacy')
 const OError = require('@overleaf/o-error')
 const { Project } = require('../../models/Project')
 const UserGetter = require('../User/UserGetter')
@@ -24,6 +24,9 @@ module.exports = {
   getMemberIdPrivilegeLevel: callbackify(getMemberIdPrivilegeLevel),
   getInvitedCollaboratorCount: callbackify(getInvitedCollaboratorCount),
   getProjectsUserIsMemberOf: callbackify(getProjectsUserIsMemberOf),
+  dangerouslyGetAllProjectsUserIsMemberOf: callbackify(
+    dangerouslyGetAllProjectsUserIsMemberOf
+  ),
   isUserInvitedMemberOfProject: callbackify(isUserInvitedMemberOfProject),
   getPublicShareTokens: callbackify(getPublicShareTokens),
   userIsTokenMember: callbackify(userIsTokenMember),
@@ -36,10 +39,15 @@ module.exports = {
     getInvitedMembersWithPrivilegeLevelsFromFields,
     getMemberIdPrivilegeLevel,
     getInvitedCollaboratorCount,
+    getInvitedEditCollaboratorCount,
+    getInvitedPendingEditorCount,
     getProjectsUserIsMemberOf,
+    dangerouslyGetAllProjectsUserIsMemberOf,
     isUserInvitedMemberOfProject,
+    isUserInvitedReadWriteMemberOfProject,
     getPublicShareTokens,
     userIsTokenMember,
+    userIsReadWriteTokenMember,
     getAllInvitedMembers,
   },
 }
@@ -52,6 +60,7 @@ async function getMemberIdsWithPrivilegeLevels(projectId) {
     tokenAccessReadOnly_refs: 1,
     tokenAccessReadAndWrite_refs: 1,
     publicAccesLevel: 1,
+    pendingEditor_refs: 1,
   })
   if (!project) {
     throw new Errors.NotFoundError(`no project found with id ${projectId}`)
@@ -62,7 +71,8 @@ async function getMemberIdsWithPrivilegeLevels(projectId) {
     project.readOnly_refs,
     project.tokenAccessReadAndWrite_refs,
     project.tokenAccessReadOnly_refs,
-    project.publicAccesLevel
+    project.publicAccesLevel,
+    project.pendingEditor_refs
   )
   return memberIds
 }
@@ -119,6 +129,27 @@ async function getInvitedCollaboratorCount(projectId) {
   return count - 1 // Don't count project owner
 }
 
+async function getInvitedEditCollaboratorCount(projectId) {
+  // Only counts invited members with readAndWrite privilege
+  const members = await getMemberIdsWithPrivilegeLevels(projectId)
+  return members.filter(
+    m =>
+      m.source === Sources.INVITE &&
+      m.privilegeLevel === PrivilegeLevels.READ_AND_WRITE
+  ).length
+}
+
+async function getInvitedPendingEditorCount(projectId) {
+  // Only counts invited members that are readonly pending editors
+  const members = await getMemberIdsWithPrivilegeLevels(projectId)
+  return members.filter(
+    m =>
+      m.source === Sources.INVITE &&
+      m.privilegeLevel === PrivilegeLevels.READ_ONLY &&
+      m.pendingEditor === true
+  ).length
+}
+
 async function isUserInvitedMemberOfProject(userId, projectId) {
   if (!userId) {
     return false
@@ -128,6 +159,23 @@ async function isUserInvitedMemberOfProject(userId, projectId) {
     if (
       member.id.toString() === userId.toString() &&
       member.source !== Sources.TOKEN
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+async function isUserInvitedReadWriteMemberOfProject(userId, projectId) {
+  if (!userId) {
+    return false
+  }
+  const members = await getMemberIdsWithPrivilegeLevels(projectId)
+  for (const member of members) {
+    if (
+      member.id.toString() === userId.toString() &&
+      member.source !== Sources.TOKEN &&
+      member.privilegeLevel === PrivilegeLevels.READ_AND_WRITE
     ) {
       return true
     }
@@ -169,6 +217,9 @@ async function getPublicShareTokens(userId, projectId) {
   }
 }
 
+// This function returns all the projects that a user currently has access to,
+// excluding projects where the user is listed in the token access fields when
+// token access has been disabled.
 async function getProjectsUserIsMemberOf(userId, fields) {
   const limit = pLimit(2)
   const [readAndWrite, readOnly, tokenReadAndWrite, tokenReadOnly] =
@@ -194,6 +245,26 @@ async function getProjectsUserIsMemberOf(userId, fields) {
         ).exec()
       ),
     ])
+  return { readAndWrite, readOnly, tokenReadAndWrite, tokenReadOnly }
+}
+
+// This function returns all the projects that a user is a member of, regardless of
+// the current state of the project, so it includes those projects where token access
+// has been disabled.
+async function dangerouslyGetAllProjectsUserIsMemberOf(userId, fields) {
+  const readAndWrite = await Project.find(
+    { collaberator_refs: userId },
+    fields
+  ).exec()
+  const readOnly = await Project.find({ readOnly_refs: userId }, fields).exec()
+  const tokenReadAndWrite = await Project.find(
+    { tokenAccessReadAndWrite_refs: userId },
+    fields
+  ).exec()
+  const tokenReadOnly = await Project.find(
+    { tokenAccessReadOnly_refs: userId },
+    fields
+  ).exec()
   return { readAndWrite, readOnly, tokenReadAndWrite, tokenReadOnly }
 }
 
@@ -226,6 +297,21 @@ async function userIsTokenMember(userId, projectId) {
   return project != null
 }
 
+async function userIsReadWriteTokenMember(userId, projectId) {
+  userId = new ObjectId(userId.toString())
+  projectId = new ObjectId(projectId.toString())
+  const project = await Project.findOne(
+    {
+      _id: projectId,
+      tokenAccessReadAndWrite_refs: userId,
+    },
+    {
+      _id: 1,
+    }
+  ).exec()
+  return project != null
+}
+
 async function _getInvitedMemberCount(projectId) {
   const members = await getMemberIdsWithPrivilegeLevels(projectId)
   return members.filter(m => m.source !== Sources.TOKEN).length
@@ -237,7 +323,8 @@ function _getMemberIdsWithPrivilegeLevelsFromFields(
   readOnlyIds,
   tokenAccessIds,
   tokenAccessReadOnlyIds,
-  publicAccessLevel
+  publicAccessLevel,
+  pendingEditorIds
 ) {
   const members = []
   members.push({
@@ -257,6 +344,9 @@ function _getMemberIdsWithPrivilegeLevelsFromFields(
       id: memberId.toString(),
       privilegeLevel: PrivilegeLevels.READ_ONLY,
       source: Sources.INVITE,
+      ...(pendingEditorIds?.some(pe => memberId.equals(pe)) && {
+        pendingEditor: true,
+      }),
     })
   }
   if (publicAccessLevel === PublicAccessLevels.TOKEN_BASED) {
@@ -292,7 +382,11 @@ async function _loadMembers(members) {
           signUpDate: 1,
         })
         if (user != null) {
-          return { user, privilegeLevel: member.privilegeLevel }
+          return {
+            user,
+            privilegeLevel: member.privilegeLevel,
+            ...(member.pendingEditor && { pendingEditor: true }),
+          }
         } else {
           return null
         }
