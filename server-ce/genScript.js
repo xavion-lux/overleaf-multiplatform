@@ -5,7 +5,7 @@ console.log('set -ex')
 
 switch (process.argv.pop()) {
   case 'install':
-    console.log('npm ci --maxsockets 1')
+    console.log('npm ci --omit=dev --maxsockets 1')
     break
   case 'compile':
     for (const service of services) {
