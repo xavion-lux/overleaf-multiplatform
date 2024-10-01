@@ -5,7 +5,7 @@ console.log('set -ex')
 
 switch (process.argv.pop()) {
   case 'install':
-    console.log('npm install --omit=dev')
+    console.log('npm install')
     break
   case 'compile':
     for (const service of services) {
