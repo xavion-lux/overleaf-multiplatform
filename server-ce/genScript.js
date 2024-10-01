@@ -16,11 +16,11 @@ switch (process.argv.pop()) {
           console.log('export CYPRESS_INSTALL_BINARY=0')
 
           // install webpack and frontend dependencies
-          console.log('npm install --include=dev')
+          console.log('npm ci --include=dev --maxsockets 1')
           // run webpack
           console.log('npm run webpack:production')
           // uninstall webpack and frontend dependencies
-          console.log('npm install --omit=dev')
+          console.log('npm ci --omit=dev --maxsockets 1')
           // precompile pug
           console.log('npm run precompile-pug')
           break
