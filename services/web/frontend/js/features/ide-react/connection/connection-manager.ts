@@ -1,8 +1,14 @@
-import { ConnectionError, ConnectionState } from './types/connection-state'
+import {
+  ConnectionError,
+  ConnectionState,
+  ExternalHeartbeat,
+  SocketDebuggingInfo,
+} from './types/connection-state'
 import SocketIoShim from '../../../ide/connection/SocketIoShim'
 import getMeta from '../../../utils/meta'
 import { Socket } from '@/features/ide-react/connection/types/socket'
 import { debugConsole } from '@/utils/debugging'
+import { isSplitTestEnabled } from '@/utils/splitTestUtils'
 
 const ONE_HOUR_IN_MS = 1000 * 60 * 60
 const TWO_MINUTES_IN_MS = 2 * 60 * 1000
@@ -12,11 +18,17 @@ const CONNECTION_ERROR_RECONNECT_DELAY = 1000
 const USER_ACTIVITY_RECONNECT_NOW_DELAY = 1000
 const USER_ACTIVITY_RECONNECT_DELAY = 5000
 const JOIN_PROJECT_RATE_LIMITED_DELAY = 15 * 1000
+const BACK_OFF_RECONNECT_OFFLINE = 5000
 
 const RECONNECT_GRACEFULLY_RETRY_INTERVAL_MS = 5000
 const MAX_RECONNECT_GRACEFULLY_INTERVAL_MS = 45 * 1000
 
+const BEFORE_RECONNECT = 'beforeReconnect'
+
 const MAX_RETRY_CONNECT = 5
+const RETRY_WEBSOCKET = 3
+
+const externalSocketHeartbeat = isSplitTestEnabled('external-socket-heartbeat')
 
 const initialState: ConnectionState = {
   readyState: WebSocket.CLOSED,
@@ -41,8 +53,15 @@ export class ConnectionManager extends EventTarget {
   private protocolVersion = -1
   private readonly idleDisconnectInterval: number
   private reconnectCountdownInterval = 0
+  private websocketFailureCount = 0
   readonly socket: Socket
   private userIsLeavingPage = false
+  private externalHeartbeatInterval?: number
+  private externalHeartbeat: ExternalHeartbeat = {
+    currentStart: 0,
+    lastSuccess: 0,
+    lastLatency: 0,
+  }
 
   constructor() {
     super()
@@ -55,20 +74,29 @@ export class ConnectionManager extends EventTarget {
     window.addEventListener('online', () => this.onOnline())
     window.addEventListener('beforeunload', () => {
       this.userIsLeavingPage = true
+      if (this.socket.socket.transport?.name === 'xhr-polling') {
+        // Websockets will close automatically.
+        this.socket.socket.disconnect()
+      }
     })
 
     const parsedURL = new URL(
       getMeta('ol-wsUrl') || '/socket.io',
       window.origin
     )
+    const query = new URLSearchParams({
+      projectId: getMeta('ol-project_id'),
+    })
+    if (externalSocketHeartbeat) {
+      query.set('esh', '1')
+      query.set('ssp', '1') // with server-side ping
+    }
     const socket = SocketIoShim.connect(parsedURL.origin, {
       resource: parsedURL.pathname.slice(1),
       'auto connect': false,
       'connect timeout': 30 * 1000,
       'force new connection': true,
-      query: new URLSearchParams({
-        projectId: getMeta('ol-project_id'),
-      }).toString(),
+      query: query.toString(),
       reconnect: false,
     }) as unknown as Socket
     this.socket = socket
@@ -86,13 +114,17 @@ export class ConnectionManager extends EventTarget {
       return
     }
 
-    socket.on('disconnect', () => this.onDisconnect())
-    socket.on('error', () => this.onConnectError())
-    socket.on('connect_failed', () => this.onConnectError())
+    socket.on('connect', () => this.onConnect())
+    socket.on('disconnect', (reason: string) => this.onDisconnect(reason))
+    socket.on('error', err => this.onConnectError(err))
+    socket.on('connect_failed', err => this.onConnectError(err))
     socket.on('joinProjectResponse', body => this.onJoinProjectResponse(body))
     socket.on('connectionRejected', err => this.onConnectionRejected(err))
     socket.on('reconnectGracefully', () => this.onReconnectGracefully())
     socket.on('forceDisconnect', (_, delay) => this.onForceDisconnect(delay))
+    socket.on('serverPing', (counter, timestamp) =>
+      this.sendPingResponse(counter, timestamp)
+    )
 
     this.tryReconnect()
   }
@@ -110,6 +142,17 @@ export class ConnectionManager extends EventTarget {
     this.lastUserActivity = performance.now()
     this.userIsLeavingPage = false
     this.ensureIsConnected()
+  }
+
+  getSocketDebuggingInfo(): SocketDebuggingInfo {
+    return {
+      client_id: this.socket.socket?.sessionid,
+      transport: this.socket.socket?.transport?.name,
+      publicId: this.socket.publicId,
+      lastUserActivity: this.lastUserActivity,
+      connectionState: this.state,
+      externalHeartbeat: this.externalHeartbeat,
+    }
   }
 
   private changeState(state: ConnectionState) {
@@ -175,17 +218,26 @@ export class ConnectionManager extends EventTarget {
     }
   }
 
-  private onConnectError() {
+  private onConnectError(err: any) {
+    if (
+      this.socket.socket.transport?.name === 'websocket' &&
+      err instanceof Event &&
+      err.target instanceof WebSocket
+    ) {
+      this.websocketFailureCount++
+    }
     if (this.connectionAttempt === null) return // ignore errors once connected.
     if (this.connectionAttempt++ < MAX_RETRY_CONNECT) {
       setTimeout(
         () => {
           if (this.canReconnect()) this.socket.socket.connect()
         },
-        // add jitter to spread reconnects
-        this.connectionAttempt *
-          (1 + Math.random()) *
-          CONNECTION_ERROR_RECONNECT_DELAY
+        // slow down when potentially offline
+        (navigator.onLine ? 0 : BACK_OFF_RECONNECT_OFFLINE) +
+          // add jitter to spread reconnects
+          this.connectionAttempt *
+            (1 + Math.random()) *
+            CONNECTION_ERROR_RECONNECT_DELAY
       )
     } else {
       if (!this.switchToWsFallbackIfPossible()) {
@@ -198,8 +250,30 @@ export class ConnectionManager extends EventTarget {
     }
   }
 
-  private onDisconnect() {
+  private onConnect() {
+    if (externalSocketHeartbeat) {
+      if (this.externalHeartbeatInterval) {
+        window.clearInterval(this.externalHeartbeatInterval)
+      }
+      if (this.socket.socket.transport?.name === 'websocket') {
+        // Do not enable external heartbeat on polling transports.
+        this.externalHeartbeatInterval = window.setInterval(
+          () => this.sendExternalHeartbeat(),
+          15_000
+        )
+      }
+    }
+    // Reset on success regardless of transport. We want to upgrade back to websocket on reconnect.
+    this.websocketFailureCount = 0
+  }
+
+  private onDisconnect(reason: string) {
+    if (reason === BEFORE_RECONNECT) return // triggered from reconnect, ignore.
     this.connectionAttempt = null
+    if (this.externalHeartbeatInterval) {
+      window.clearInterval(this.externalHeartbeatInterval)
+    }
+    this.externalHeartbeat.currentStart = 0
     this.changeState({
       ...this.state,
       readyState: WebSocket.CLOSED,
@@ -297,7 +371,7 @@ export class ConnectionManager extends EventTarget {
     return true
   }
 
-  disconnect() {
+  private disconnect() {
     this.changeState({
       ...this.state,
       readyState: WebSocket.CLOSED,
@@ -356,13 +430,25 @@ export class ConnectionManager extends EventTarget {
     })
 
     this.addReconnectListeners()
+    this.socket.socket.transports = ['xhr-polling']
+    if (this.websocketFailureCount < RETRY_WEBSOCKET) {
+      this.socket.socket.transports.unshift('websocket')
+    }
+    if (this.socket.socket.connecting || this.socket.socket.connected) {
+      // Ensure the old transport has been cleaned up.
+      // Socket.disconnect() does not accept a parameter. Go one level deeper.
+      this.socket.socket.onDisconnect(BEFORE_RECONNECT)
+    }
     this.socket.socket.connect()
   }
 
   private addReconnectListeners() {
     const handleFailure = () => {
       removeSocketListeners()
-      this.startAutoReconnectCountdown(0)
+      this.startAutoReconnectCountdown(
+        // slow down when potentially offline
+        navigator.onLine ? 0 : BACK_OFF_RECONNECT_OFFLINE
+      )
     }
     const handleSuccess = () => {
       removeSocketListeners()
@@ -400,5 +486,25 @@ export class ConnectionManager extends EventTarget {
     } else {
       this.tryReconnect()
     }
+  }
+
+  private sendExternalHeartbeat() {
+    const t0 = performance.now()
+    this.socket.emit('debug.getHostname', () => {
+      if (this.externalHeartbeat.currentStart !== t0) {
+        return
+      }
+      const t1 = performance.now()
+      this.externalHeartbeat = {
+        currentStart: 0,
+        lastSuccess: t1,
+        lastLatency: t1 - t0,
+      }
+    })
+    this.externalHeartbeat.currentStart = t0
+  }
+
+  private sendPingResponse(counter?: number, timestamp?: number) {
+    this.socket.emit('clientPong', counter, timestamp)
   }
 }

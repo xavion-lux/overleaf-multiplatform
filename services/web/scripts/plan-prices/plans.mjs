@@ -1,5 +1,5 @@
 // Creates data for localizedPlanPricing object in settings.overrides.saas.js
-// and plans object in main/plans.js
+// and group plans object in app/templates/plans/groups.json
 
 // https://github.com/import-js/eslint-plugin-import/issues/1810
 // eslint-disable-next-line import/no-unresolved
@@ -64,10 +64,18 @@ const currencies = [
   'USD',
 ]
 
+/**
+ * This is duplicated in:
+ *   - services/web/app/src/Features/Subscription/SubscriptionHelper.js
+ *   - services/web/modules/subscriptions/frontend/js/pages/plans-new-design/group-member-picker/group-plan-pricing.js
+ */
+function roundUpToNearest5Cents(number) {
+  return Math.ceil(number * 20) / 20
+}
+
 function generatePlans(workSheetJSON) {
   // localizedPlanPricing object for settings.overrides.saas.js
   const localizedPlanPricing = {}
-  // plans object for main/plans.js
 
   for (const currency of currencies) {
     localizedPlanPricing[currency] = {
@@ -102,22 +110,41 @@ function generatePlans(workSheetJSON) {
       const monthly = Number(monthlyPlan[currency])
       const monthlyTimesTwelve = Number(monthlyPlan[currency] * 12)
       const annual = Number(annualPlan[currency])
+      const annualDividedByTwelve = Number(
+        roundUpToNearest5Cents(annualPlan[currency] / 12)
+      )
 
       localizedPlanPricing[currency] = {
         ...localizedPlanPricing[currency],
-        [outputKey]: { monthly, monthlyTimesTwelve, annual },
+        [outputKey]: {
+          monthly,
+          monthlyTimesTwelve,
+          annual,
+          annualDividedByTwelve,
+        },
       }
     }
   }
-  return { localizedPlanPricing }
+  return localizedPlanPricing
 }
 
 function generateGroupPlans(workSheetJSON) {
+  // group plans object for app/templates/plans/groups.json
   const groupPlans = workSheetJSON.filter(data =>
     data.plan_code.startsWith('group')
   )
 
   const sizes = ['2', '3', '4', '5', '10', '20', '50']
+  const additionalLicenseAddOnLegacyPricesFilePath = path.resolve(
+    __dirname,
+    'additional-license-add-on-legacy-prices.json'
+  )
+  const additionalLicenseAddOnLegacyPricesFile = fs.readFileSync(
+    additionalLicenseAddOnLegacyPricesFilePath
+  )
+  const additionalLicenseAddOnLegacyPrices = JSON.parse(
+    additionalLicenseAddOnLegacyPricesFile
+  )
 
   const result = {}
   for (const type1 of ['educational', 'enterprise']) {
@@ -134,6 +161,15 @@ function generateGroupPlans(workSheetJSON) {
 
           result[type1][type2][currency][size] = {
             price_in_cents: plan[currency] * 100,
+          }
+
+          const additionalLicenseAddOnLegacyPrice =
+            additionalLicenseAddOnLegacyPrices[type1][type2][size]?.[currency]
+          if (additionalLicenseAddOnLegacyPrice) {
+            Object.assign(result[type1][type2][currency][size], {
+              additional_license_legacy_price_in_cents:
+                additionalLicenseAddOnLegacyPrice * 100,
+            })
           }
         }
       }
@@ -174,7 +210,7 @@ function writeFile(outputFile, data) {
   fs.writeFileSync(outputFile, data)
 }
 
-const { localizedPlanPricing } = generatePlans(input)
+const localizedPlanPricing = generatePlans(input)
 const groupPlans = generateGroupPlans(input)
 
 if (argv.output) {

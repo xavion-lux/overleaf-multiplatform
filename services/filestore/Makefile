@@ -32,12 +32,30 @@ HERE=$(shell pwd)
 MONOREPO=$(shell cd ../../ && pwd)
 # Run the linting commands in the scope of the monorepo.
 # Eslint and prettier (plus some configs) are on the root.
-RUN_LINTING = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(HERE) node:20.18.0 npm run --silent
+RUN_LINTING = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(HERE) node:20.18.2 npm run --silent
 
 RUN_LINTING_CI = docker run --rm --volume $(MONOREPO)/.editorconfig:/overleaf/.editorconfig --volume $(MONOREPO)/.eslintignore:/overleaf/.eslintignore --volume $(MONOREPO)/.eslintrc:/overleaf/.eslintrc --volume $(MONOREPO)/.prettierignore:/overleaf/.prettierignore --volume $(MONOREPO)/.prettierrc:/overleaf/.prettierrc --volume $(MONOREPO)/tsconfig.backend.json:/overleaf/tsconfig.backend.json ci/$(PROJECT_NAME):$(BRANCH_NAME)-$(BUILD_NUMBER) npm run --silent
 
 # Same but from the top of the monorepo
-RUN_LINTING_MONOREPO = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(MONOREPO) node:20.18.0 npm run --silent
+RUN_LINTING_MONOREPO = docker run --rm -v $(MONOREPO):$(MONOREPO) -w $(MONOREPO) node:20.18.2 npm run --silent
+
+SHELLCHECK_OPTS = \
+	--shell=bash \
+	--external-sources
+SHELLCHECK_COLOR := $(if $(CI),--color=never,--color)
+SHELLCHECK_FILES := { git ls-files "*.sh" -z; git grep -Plz "\A\#\!.*bash"; } | sort -zu
+
+shellcheck:
+	@$(SHELLCHECK_FILES) | xargs -0 -r docker run --rm -v $(HERE):/mnt -w /mnt \
+		koalaman/shellcheck:stable $(SHELLCHECK_OPTS) $(SHELLCHECK_COLOR)
+
+shellcheck_fix:
+	@$(SHELLCHECK_FILES) | while IFS= read -r -d '' file; do \
+		diff=$$(docker run --rm -v $(HERE):/mnt -w /mnt koalaman/shellcheck:stable $(SHELLCHECK_OPTS) --format=diff "$$file" 2>/dev/null); \
+		if [ -n "$$diff" ] && ! echo "$$diff" | patch -p1 >/dev/null 2>&1; then echo "\033[31m$$file\033[0m"; \
+		elif [ -n "$$diff" ]; then echo "$$file"; \
+		else echo "\033[2m$$file\033[0m"; fi \
+	done
 
 format:
 	$(RUN_LINTING) format
@@ -63,7 +81,7 @@ typecheck:
 typecheck_ci:
 	$(RUN_LINTING_CI) types:check
 
-test: format lint typecheck test_unit test_acceptance
+test: format lint typecheck shellcheck test_unit test_acceptance
 
 test_unit:
 ifneq (,$(wildcard test/unit))
@@ -130,6 +148,7 @@ publish:
 	lint lint_fix \
 	build_types typecheck \
 	lint_ci format_ci typecheck_ci \
+	shellcheck shellcheck_fix \
 	test test_clean test_unit test_unit_clean \
 	test_acceptance test_acceptance_debug test_acceptance_pre_run \
 	test_acceptance_run test_acceptance_run_debug test_acceptance_clean \

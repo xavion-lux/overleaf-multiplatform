@@ -10,7 +10,7 @@ import {
 } from 'react'
 import classNames from 'classnames'
 import _ from 'lodash'
-import { findInTree } from '../util/find-in-tree'
+import { findInTree, findInTreeOrThrow } from '../util/find-in-tree'
 import { useFileTreeData } from '../../../shared/context/file-tree-data-context'
 import { useProjectContext } from '../../../shared/context/project-context'
 import { useLayoutContext } from '../../../shared/context/layout-context'
@@ -21,6 +21,8 @@ import { FindResult } from '@/features/file-tree/util/path'
 import { fileCollator } from '@/features/file-tree/util/file-collator'
 import { Folder } from '../../../../../types/folder'
 import { FileTreeEntity } from '../../../../../types/file-tree-entity'
+import { isMac } from '@/shared/utils/os'
+import useEventListener from '@/shared/hooks/use-event-listener'
 
 const FileTreeSelectableContext = createContext<
   | {
@@ -176,7 +178,7 @@ export const FileTreeSelectableProvider: FC<{
     }
     const _selectedEntities = Array.from(selectedEntityIds)
       .map(id => findInTree(fileTreeData, id))
-      .filter(Boolean)
+      .filter(entity => entity !== null)
     onSelect(_selectedEntities)
     setSelectedEntities(_selectedEntities)
   }, [
@@ -187,18 +189,22 @@ export const FileTreeSelectableProvider: FC<{
     setSelectedEntities,
   ])
 
-  useEffect(() => {
-    // listen for `editor.openDoc` and selected that doc
-    function handleOpenDoc(ev: any) {
-      const found = findInTree(fileTreeData, ev.detail)
-      if (!found) return
+  // Synchronize the file tree when openFileWithId or openDocWithId is called on the editor
+  // manager context from elsewhere. If the file tree does change, it will
+  // trigger the onSelect handler in this component, which will update the local
+  // state.
+  useEventListener(
+    'entity:opened',
+    useCallback(
+      (event: CustomEvent<string>) => {
+        const found = findInTree(fileTreeData, event.detail)
+        if (!found) return
 
-      dispatch({ type: ACTION_TYPES.SELECT, id: found.entity._id })
-    }
-
-    window.addEventListener('editor.openDoc', handleOpenDoc)
-    return () => window.removeEventListener('editor.openDoc', handleOpenDoc)
-  }, [fileTreeData])
+        dispatch({ type: ACTION_TYPES.SELECT, id: found.entity._id })
+      },
+      [fileTreeData]
+    )
+  )
 
   const select = useCallback(id => {
     dispatch({ type: ACTION_TYPES.SELECT, id })
@@ -233,8 +239,6 @@ export const FileTreeSelectableProvider: FC<{
     </FileTreeSelectableContext.Provider>
   )
 }
-
-const isMac = /Mac/.test(window.navigator?.platform)
 
 export function useSelectableEntity(id: string, type: string) {
   const { view, setView } = useLayoutContext()
@@ -283,7 +287,7 @@ export function useSelectableEntity(id: string, type: string) {
 
   const chooseView = useCallback(() => {
     for (const id of selectedEntityIds) {
-      const selectedEntity = findInTree(fileTreeData, id)
+      const selectedEntity = findInTreeOrThrow(fileTreeData, id)
 
       if (selectedEntity.type === 'doc') {
         return 'editor'

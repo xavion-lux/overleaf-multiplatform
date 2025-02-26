@@ -120,7 +120,7 @@ describe('ProjectDuplicator', function () {
         createdBlob: true,
         path: this.file2Path,
         file: this.newFile2,
-        url: this.filestoreUrl,
+        url: null,
       },
     ]
 
@@ -221,6 +221,9 @@ describe('ProjectDuplicator', function () {
         flushProjectToTpds: sinon.stub().resolves(),
       },
     }
+    this.Features = {
+      hasFeature: sinon.stub().withArgs('project-history-blobs').returns(true),
+    }
 
     this.ProjectDuplicator = SandboxedModule.require(MODULE_PATH, {
       requires: {
@@ -241,6 +244,7 @@ describe('ProjectDuplicator', function () {
         '../ThirdPartyDataStore/TpdsProjectFlusher': this.TpdsProjectFlusher,
         '../Tags/TagsHandler': this.TagsHandler,
         '../History/HistoryManager': this.HistoryManager,
+        '../../infrastructure/Features': this.Features,
       },
     })
   })
@@ -304,7 +308,7 @@ describe('ProjectDuplicator', function () {
     })
 
     it('should copy files to the filestore', function () {
-      for (const file of [this.file0, this.file1, this.file2]) {
+      for (const file of [this.file0, this.file1]) {
         this.FileStoreHandler.promises.copyFile.should.have.been.calledWith(
           this.project._id,
           file._id,
@@ -312,6 +316,15 @@ describe('ProjectDuplicator', function () {
           this.newFileId
         )
       }
+    })
+
+    it('should not copy files that have been sent to history-v1 to the filestore', function () {
+      this.FileStoreHandler.promises.copyFile.should.not.have.been.calledWith(
+        this.project._id,
+        this.file2._id,
+        this.newProject._id,
+        this.newFileId
+      )
     })
 
     it('should create a blank project', function () {

@@ -2,7 +2,6 @@ extends ../layout-react
 
 block vars
 	- bootstrap5PageStatus = 'enabled' // One of 'disabled', 'enabled', and 'queryStringOnly'
-	- bootstrap5PageSplitTest = 'bootstrap-5-subscription'
 
 block entrypointVar
 	- entrypoint = 'pages/user/subscription/dashboard'
@@ -22,6 +21,8 @@ block append meta
 	meta(name="ol-hasSubscription" data-type="boolean" content=hasSubscription)
 	meta(name="ol-fromPlansPage" data-type="boolean" content=fromPlansPage)
 	meta(name="ol-plans", data-type="json" content=plans)
+	meta(name="ol-groupSettingsAdvertisedFor", data-type="json" content=groupSettingsAdvertisedFor)
+	meta(name="ol-canUseFlexibleLicensing", data-type="boolean", content=canUseFlexibleLicensing)
 	meta(name="ol-groupSettingsEnabledFor", data-type="json" content=groupSettingsEnabledFor)
 	meta(name="ol-user" data-type="json" content=user)
 	if (personalSubscription && personalSubscription.recurly)

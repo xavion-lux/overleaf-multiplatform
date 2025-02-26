@@ -20,8 +20,7 @@ import { UserId } from '../../../../../types/user'
 import { deleteJSON, getJSON, postJSON } from '@/infrastructure/fetch-json'
 import RangesTracker from '@overleaf/ranges-tracker'
 import { CommentOperation } from '../../../../../types/change'
-import useScopeValue from '@/shared/hooks/use-scope-value'
-import { DocumentContainer } from '@/features/ide-react/editor/document-container'
+import { useEditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
 
 export type Threads = Record<ThreadId, ReviewPanelCommentThread>
 
@@ -39,6 +38,7 @@ type ThreadsActions = {
     content: string
   ) => Promise<void>
   deleteMessage: (threadId: ThreadId, commentId: CommentId) => Promise<void>
+  deleteOwnMessage: (threadId: ThreadId, commentId: CommentId) => Promise<void>
 }
 
 const ThreadsActionsContext = createContext<ThreadsActions | undefined>(
@@ -47,10 +47,7 @@ const ThreadsActionsContext = createContext<ThreadsActions | undefined>(
 
 export const ThreadsProvider: FC = ({ children }) => {
   const { _id: projectId } = useProjectContext()
-
-  const [currentDoc] = useScopeValue<DocumentContainer | null>(
-    'editor.sharejs_doc'
-  )
+  const { currentDocument } = useEditorManagerContext()
 
   // const [error, setError] = useState<Error>()
   const [data, setData] = useState<Threads>()
@@ -211,6 +208,34 @@ export const ThreadsProvider: FC = ({ children }) => {
     }, [])
   )
 
+  useSocketListener(
+    socket,
+    'new-comment-threads',
+    useCallback(threads => {
+      setData(prevState => {
+        const newThreads = { ...prevState }
+        for (const threadId of Object.keys(threads)) {
+          const thread = threads[threadId]
+          const newThreadData: ReviewPanelCommentThread = {
+            messages: [],
+            resolved: thread.resolved,
+            resolved_at: thread.resolved_at,
+            resolved_by_user_id: thread.resolved_by_user_id,
+            resolved_by_user: thread.resolved_by_user,
+          }
+          for (const message of thread.messages) {
+            newThreadData.messages.push({
+              ...message,
+              timestamp: new Date(message.timestamp),
+            })
+          }
+          newThreads[threadId as ThreadId] = newThreadData
+        }
+        return newThreads
+      })
+    }, [])
+  )
+
   const actions = useMemo(
     () => ({
       async addComment(pos: number, text: string, content: string) {
@@ -226,23 +251,23 @@ export const ThreadsProvider: FC = ({ children }) => {
           t: threadId,
         }
 
-        currentDoc?.submitOp(op)
+        currentDocument?.submitOp(op)
       },
       async resolveThread(threadId: string) {
         await postJSON(
-          `/project/${projectId}/doc/${currentDoc?.doc_id}/thread/${threadId}/resolve`
+          `/project/${projectId}/doc/${currentDocument?.doc_id}/thread/${threadId}/resolve`
         )
       },
       async reopenThread(threadId: string) {
         await postJSON(
-          `/project/${projectId}/doc/${currentDoc?.doc_id}/thread/${threadId}/reopen`
+          `/project/${projectId}/doc/${currentDocument?.doc_id}/thread/${threadId}/reopen`
         )
       },
       async deleteThread(threadId: string) {
         await deleteJSON(
-          `/project/${projectId}/doc/${currentDoc?.doc_id}/thread/${threadId}`
+          `/project/${projectId}/doc/${currentDocument?.doc_id}/thread/${threadId}`
         )
-        currentDoc?.ranges?.removeCommentId(threadId)
+        currentDocument?.ranges?.removeCommentId(threadId)
       },
       async addMessage(threadId: ThreadId, content: string) {
         await postJSON(`/project/${projectId}/thread/${threadId}/messages`, {
@@ -264,8 +289,13 @@ export const ThreadsProvider: FC = ({ children }) => {
           `/project/${projectId}/thread/${threadId}/messages/${commentId}`
         )
       },
+      async deleteOwnMessage(threadId: ThreadId, commentId: CommentId) {
+        await deleteJSON(
+          `/project/${projectId}/thread/${threadId}/own-messages/${commentId}`
+        )
+      },
     }),
-    [currentDoc, projectId]
+    [currentDocument, projectId]
   )
 
   return (

@@ -8,6 +8,7 @@ import { useGroupMembersContext } from '../context/group-members-context'
 import ErrorAlert from './error-alert'
 import MembersList from './members-table/members-list'
 import { useFeatureFlag } from '@/shared/context/split-test-context'
+import { sendMB } from '../../../infrastructure/event-tracking'
 
 export default function GroupMembers() {
   const { isReady } = useWaitForI18n()
@@ -32,6 +33,7 @@ export default function GroupMembers() {
   const groupName = getMeta('ol-groupName')
   const groupSize = getMeta('ol-groupSize')
   const canUseFlexibleLicensing = getMeta('ol-canUseFlexibleLicensing')
+  const canUseAddSeatsFeature = getMeta('ol-canUseAddSeatsFeature')
   const isFlexibleGroupLicensing =
     canUseFlexibleLicensing && isFlexibleGroupLicensingFeatureFlagEnabled
 
@@ -64,13 +66,19 @@ export default function GroupMembers() {
                   addedUsersSize: users.length,
                   groupSize,
                 })}
-          </strong>{' '}
-          <a
-            href="/user/subscription/group/add-users"
-            rel="noreferrer noopener"
-          >
-            {t('add_more_users')}.
-          </a>
+          </strong>
+          {canUseAddSeatsFeature && (
+            <>
+              {' '}
+              <a
+                href="/user/subscription/group/add-users"
+                rel="noreferrer noopener"
+                onClick={() => sendMB('flex-add-users')}
+              >
+                {t('add_more_users')}.
+              </a>
+            </>
+          )}
         </small>
       )
     }

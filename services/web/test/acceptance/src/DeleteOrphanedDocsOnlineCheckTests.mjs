@@ -1,5 +1,5 @@
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
 import { expect } from 'chai'
 import logger from '@overleaf/logger'
 import { filterOutput } from './helpers/settings.mjs'
@@ -160,7 +160,6 @@ describe('DeleteOrphanedDocsOnlineCheck', function () {
       `Deleted project ${projectIds[8]} has 1 orphaned docs: ["${docIds[8]}"]`,
       // Two docs in the same project
       `Deleted project ${projectIds[9]} has 2 orphaned docs: ["${docIds[9]}","${docIds[10]}"]`,
-      '',
     ])
     expect(stdErr).to.deep.equal([
       ...`Options: ${JSON.stringify(options, null, 2)}`.split('\n'),
@@ -219,7 +218,6 @@ describe('DeleteOrphanedDocsOnlineCheck', function () {
       // 10 has as ready been processed as part of the last batch -- same project_id as 9.
       `Processed 10 projects (8 projects with orphaned docs/10 docs deleted) until ${oneDayFromProjectId9AsObjectId}`,
       'Done.',
-      '',
     ])
   }
 

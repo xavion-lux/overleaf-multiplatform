@@ -50,6 +50,7 @@ describe('RecurlyClient', function () {
       total: 16.5,
       periodStart: new Date(),
       periodEnd: new Date(),
+      collectionMethod: 'automatic',
     })
 
     this.recurlySubscription = {
@@ -79,6 +80,7 @@ describe('RecurlyClient', function () {
       currency: this.subscription.currency,
       currentPeriodStartedAt: this.subscription.periodStart,
       currentPeriodEndsAt: this.subscription.periodEnd,
+      collectionMethod: this.subscription.collectionMethod,
     }
 
     this.recurlySubscriptionChange = new recurly.SubscriptionChange()
@@ -97,6 +99,7 @@ describe('RecurlyClient', function () {
     let client
     this.client = client = {
       getAccount: sinon.stub(),
+      getBillingInfo: sinon.stub(),
       listAccountSubscriptions: sinon.stub(),
       previewSubscriptionChange: sinon.stub(),
     }
@@ -105,6 +108,9 @@ describe('RecurlyClient', function () {
       Client: function () {
         return client
       },
+    }
+    this.Errors = {
+      MissingBillingInfoError: class extends Error {},
     }
 
     return (this.RecurlyClient = SandboxedModule.require(MODULE_PATH, {
@@ -122,6 +128,7 @@ describe('RecurlyClient', function () {
           debug: sinon.stub(),
         },
         '../User/UserGetter': this.UserGetter,
+        './Errors': this.Errors,
       },
     }))
   })
@@ -383,6 +390,24 @@ describe('RecurlyClient', function () {
     })
   })
 
+  describe('pauseSubscriptionByUuid', function () {
+    it('should attempt to pause the subscription', async function () {
+      this.client.pauseSubscription = sinon
+        .stub()
+        .resolves(this.recurlySubscription)
+      const subscription =
+        await this.RecurlyClient.promises.pauseSubscriptionByUuid(
+          this.subscription.uuid,
+          3
+        )
+      expect(subscription).to.deep.equal(this.recurlySubscription)
+      expect(this.client.pauseSubscription).to.be.calledWith(
+        'uuid-' + this.subscription.uuid,
+        { remainingPauseCycles: 3 }
+      )
+    })
+  })
+
   describe('previewSubscriptionChange', function () {
     describe('compute immediate charge', function () {
       it('only has charge invoice', async function () {
@@ -441,6 +466,24 @@ describe('RecurlyClient', function () {
         expect(immediateCharge.tax).to.be.equal(16.2)
         expect(immediateCharge.total).to.be.equal(96.2)
       })
+    })
+  })
+
+  describe('getPaymentMethod', function () {
+    it('should throw MissingBillingInfoError', async function () {
+      this.client.getBillingInfo = sinon
+        .stub()
+        .throws(new recurly.errors.NotFoundError())
+      await expect(
+        this.RecurlyClient.promises.getPaymentMethod(this.user._id)
+      ).to.be.rejectedWith(this.Errors.MissingBillingInfoError)
+    })
+
+    it('should rethrow errors different than MissingBillingInfoError', async function () {
+      this.client.getBillingInfo = sinon.stub().throws(new Error())
+      await expect(
+        this.RecurlyClient.promises.getPaymentMethod(this.user._id)
+      ).to.be.rejectedWith(Error)
     })
   })
 })

@@ -15,7 +15,7 @@
     border: 0;
     padding: 0;
 
-    a {
+    .row-link-inner {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -23,7 +23,9 @@
       text-decoration: none;
       color: var(--neutral-90);
       width: 100%;
+    }
 
+    a.row-link-inner {
       &:hover {
         background-color: var(--neutral-10);
       }
@@ -173,6 +175,10 @@
 
       h4 {
         margin-bottom: var(--spacing-06);
+
+        &:has(+ .payment-nudge-annual-button) {
+          margin-bottom: 0;
+        }
       }
 
       .features-list {
@@ -408,5 +414,87 @@
 .group-subscription-upgrade-card {
   .title {
     @include body-lg;
+  }
+}
+
+.pricing-warning-heading {
+  @include body-base;
+
+  font-weight: 600;
+}
+
+.not-student-switch {
+  font-size: var(--font-size-02);
+  margin-left: var(--spacing-08);
+
+  label {
+    font-weight: normal;
+  }
+
+  button {
+    margin: 0 0 0 var(--spacing-03);
+    padding: 0;
+    color: var(--link-web);
+    font-size: var(--font-size-02);
+    vertical-align: inherit;
+
+    .button-content {
+      color: var(--link-web);
+    }
+  }
+}
+
+.payment-nudge-annual-button {
+  margin: var(--spacing-02) 0 var(--spacing-06) 0;
+
+  @include body-sm;
+
+  button {
+    padding: 0;
+  }
+}
+
+.add-on-card {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-05);
+  gap: var(--spacing-05);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--border-radius-base);
+
+  .add-on-card-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .add-on-card-content {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .heading {
+    @include body-base;
+
+    font-weight: 600;
+  }
+
+  .description {
+    color: var(--content-secondary);
+  }
+
+  .highlight {
+    color: var(--content-primary);
+  }
+
+  .add-on-options-toggle {
+    padding: var(--spacing-04);
+    font-size: 0;
+    line-height: 1;
+    border: none;
+    border-radius: 50%;
+
+    &::after {
+      content: none;
+    }
   }
 }

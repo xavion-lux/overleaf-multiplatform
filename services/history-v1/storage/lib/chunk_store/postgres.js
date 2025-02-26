@@ -1,18 +1,24 @@
 const { Chunk } = require('overleaf-editor-core')
 const assert = require('../assert')
 const knex = require('../knex')
+const knexReadOnly = require('../knex_read_only')
 const { ChunkVersionConflictError } = require('./errors')
+const { updateProjectRecord } = require('./mongo')
 
 const DUPLICATE_KEY_ERROR_CODE = '23505'
 
 /**
  * Get the latest chunk's metadata from the database
+ * @param {string} projectId
+ * @param {Object} [opts]
+ * @param {boolean} [opts.readOnly]
  */
-async function getLatestChunk(projectId) {
+async function getLatestChunk(projectId, opts = {}) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
+  const { readOnly = false } = opts
 
-  const record = await knex('chunks')
+  const record = await (readOnly ? knexReadOnly : knex)('chunks')
     .where('doc_id', projectId)
     .orderBy('end_version', 'desc')
     .first()
@@ -26,8 +32,8 @@ async function getLatestChunk(projectId) {
  * Get the metadata for the chunk that contains the given version.
  */
 async function getChunkForVersion(projectId, version) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   const record = await knex('chunks')
     .where('doc_id', projectId)
@@ -45,8 +51,8 @@ async function getChunkForVersion(projectId, version) {
  * the given timestamp.
  */
 async function getChunkForTimestamp(projectId, timestamp) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   // This query will find the latest chunk after the timestamp (query orders
   // in reverse chronological order), OR the latest chunk
@@ -81,6 +87,7 @@ function chunkFromRecord(record) {
     id: record.id,
     startVersion: record.start_version,
     endVersion: record.end_version,
+    endTimestamp: record.end_timestamp,
   }
 }
 
@@ -88,19 +95,33 @@ function chunkFromRecord(record) {
  * Get all of a project's chunk ids
  */
 async function getProjectChunkIds(projectId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   const records = await knex('chunks').select('id').where('doc_id', projectId)
   return records.map(record => record.id)
 }
 
 /**
+ * Get all of a projects chunks directly
+ */
+async function getProjectChunks(projectId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
+  projectId = parseInt(projectId, 10)
+
+  const records = await knex('chunks')
+    .select()
+    .where('doc_id', projectId)
+    .orderBy('end_version')
+  return records.map(chunkFromRecord)
+}
+
+/**
  * Insert a pending chunk before sending it to object storage.
  */
 async function insertPendingChunk(projectId, chunk) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   const result = await knex.first(
     knex.raw("nextval('chunks_id_seq'::regclass)::integer as chunkid")
@@ -120,14 +141,15 @@ async function insertPendingChunk(projectId, chunk) {
  * Record that a new chunk was created.
  */
 async function confirmCreate(projectId, chunk, chunkId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   await knex.transaction(async tx => {
     await Promise.all([
       _deletePendingChunk(tx, projectId, chunkId),
       _insertChunk(tx, projectId, chunk, chunkId),
     ])
+    await updateProjectRecord(projectId, chunk)
   })
 }
 
@@ -135,8 +157,8 @@ async function confirmCreate(projectId, chunk, chunkId) {
  * Record that a chunk was replaced by a new one.
  */
 async function confirmUpdate(projectId, oldChunkId, newChunk, newChunkId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   await knex.transaction(async tx => {
     await _deleteChunks(tx, { doc_id: projectId, id: oldChunkId })
@@ -144,6 +166,7 @@ async function confirmUpdate(projectId, oldChunkId, newChunk, newChunkId) {
       _deletePendingChunk(tx, projectId, newChunkId),
       _insertChunk(tx, projectId, newChunk, newChunkId),
     ])
+    await updateProjectRecord(projectId, newChunk)
   })
 }
 
@@ -186,8 +209,8 @@ async function _insertChunk(tx, projectId, chunk, chunkId) {
  * @return {Promise}
  */
 async function deleteChunk(projectId, chunkId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
   assert.integer(chunkId, 'bad chunkId')
 
   await _deleteChunks(knex, { doc_id: projectId, id: chunkId })
@@ -197,8 +220,8 @@ async function deleteChunk(projectId, chunkId) {
  * Delete all of a project's chunks
  */
 async function deleteProjectChunks(projectId) {
+  assert.postgresId(projectId, `bad projectId ${projectId}`)
   projectId = parseInt(projectId, 10)
-  assert.integer(projectId, 'bad projectId')
 
   await knex.transaction(async tx => {
     await _deleteChunks(knex, { doc_id: projectId })
@@ -260,6 +283,7 @@ module.exports = {
   getChunkForVersion,
   getChunkForTimestamp,
   getProjectChunkIds,
+  getProjectChunks,
   insertPendingChunk,
   confirmCreate,
   confirmUpdate,

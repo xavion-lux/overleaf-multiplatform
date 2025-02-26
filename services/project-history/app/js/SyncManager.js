@@ -8,7 +8,7 @@ import logger from '@overleaf/logger'
 import Metrics from '@overleaf/metrics'
 import OError from '@overleaf/o-error'
 import { File, Range } from 'overleaf-editor-core'
-import { SyncError } from './Errors.js'
+import { NeedFullProjectStructureResyncError, SyncError } from './Errors.js'
 import { db, ObjectId } from './mongodb.js'
 import * as SnapshotManager from './SnapshotManager.js'
 import * as LockManager from './LockManager.js'
@@ -53,7 +53,7 @@ async function startResync(projectId, options = {}) {
     await LockManager.promises.runWithLock(
       keys.projectHistoryLock({ project_id: projectId }),
       async extendLock => {
-        await _startResyncWithoutLock(projectId, options)
+        await startResyncWithoutLock(projectId, options)
       }
     )
   } catch (error) {
@@ -76,7 +76,7 @@ async function startHardResync(projectId, options = {}) {
         await clearResyncState(projectId)
         await RedisManager.promises.clearFirstOpTimestamp(projectId)
         await RedisManager.promises.destroyDocUpdatesQueue(projectId)
-        await _startResyncWithoutLock(projectId, options)
+        await startResyncWithoutLock(projectId, options)
       }
     )
   } catch (error) {
@@ -86,7 +86,8 @@ async function startHardResync(projectId, options = {}) {
   }
 }
 
-async function _startResyncWithoutLock(projectId, options) {
+// The caller must hold the lock and should record any errors via the ErrorRecorder.
+async function startResyncWithoutLock(projectId, options) {
   await ErrorRecorder.promises.recordSyncStart(projectId)
 
   const syncState = await _getResyncState(projectId)
@@ -99,6 +100,9 @@ async function _startResyncWithoutLock(projectId, options) {
   const webOpts = {}
   if (options.historyRangesMigration) {
     webOpts.historyRangesMigration = options.historyRangesMigration
+  }
+  if (options.resyncProjectStructureOnly) {
+    webOpts.resyncProjectStructureOnly = options.resyncProjectStructureOnly
   }
   await WebApiManager.promises.requestResync(projectId, webOpts)
   await setResyncState(projectId, syncState)
@@ -156,6 +160,29 @@ async function clearResyncState(projectId) {
   })
 }
 
+/**
+ * @param {string} projectId
+ * @param {Date} date
+ * @return {Promise<void>}
+ */
+async function clearResyncStateIfAllAfter(projectId, date) {
+  const rawSyncState = await db.projectHistorySyncState.findOne({
+    project_id: new ObjectId(projectId.toString()),
+  })
+  if (!rawSyncState) return // already cleared
+  const state = SyncState.fromRaw(projectId, rawSyncState)
+  if (state.isSyncOngoing()) return // new sync started
+  for (const { timestamp } of rawSyncState.history) {
+    if (timestamp < date) return // preserve old resync states
+  }
+  // expiresAt is cleared when starting a sync and bumped when making changes.
+  // Use expiresAt as read to ensure we only clear the confirmed state.
+  await db.projectHistorySyncState.deleteOne({
+    project_id: new ObjectId(projectId.toString()),
+    expiresAt: rawSyncState.expiresAt,
+  })
+}
+
 async function skipUpdatesDuringSync(projectId, updates) {
   const syncState = await _getResyncState(projectId)
   if (!syncState.isSyncOngoing()) {
@@ -178,9 +205,18 @@ async function skipUpdatesDuringSync(projectId, updates) {
   return { updates: filteredUpdates, syncState }
 }
 
+/**
+ * @param {string} projectId
+ * @param {string} projectHistoryId
+ * @param {{chunk: import('overleaf-editor-core/lib/types.js').RawChunk}} mostRecentChunk
+ * @param {Array<Update>} updates
+ * @param {() => Promise<void>} extendLock
+ * @return {Promise<Array<Update>>}
+ */
 async function expandSyncUpdates(
   projectId,
   projectHistoryId,
+  mostRecentChunk,
   updates,
   extendLock
 ) {
@@ -195,10 +231,11 @@ async function expandSyncUpdates(
   const syncState = await _getResyncState(projectId)
 
   // compute the current snapshot from the most recent chunk
-  const snapshotFiles = await SnapshotManager.promises.getLatestSnapshotFiles(
-    projectId,
-    projectHistoryId
-  )
+  const snapshotFiles =
+    await SnapshotManager.promises.getLatestSnapshotFilesForChunk(
+      projectHistoryId,
+      mostRecentChunk
+    )
 
   // check if snapshot files are valid
   const invalidFiles = _.pickBy(
@@ -271,8 +308,10 @@ class SyncState {
         })
       }
 
-      for (const doc of update.resyncProjectStructure.docs) {
-        this.startDocContentSync(doc.path)
+      if (!update.resyncProjectStructureOnly) {
+        for (const doc of update.resyncProjectStructure.docs) {
+          this.startDocContentSync(doc.path)
+        }
       }
 
       this.stopProjectStructureSync()
@@ -465,6 +504,28 @@ class SyncUpdateExpander {
         persistedBinaryFiles
       )
       this.queueSetMetadataOpsForLinkedFiles(update)
+
+      if (update.resyncProjectStructureOnly) {
+        const docPaths = new Set()
+        for (const entity of update.resyncProjectStructure.docs) {
+          const path = UpdateTranslator._convertPathname(entity.path)
+          docPaths.add(path)
+        }
+        for (const expandedUpdate of this.expandedUpdates) {
+          if (docPaths.has(expandedUpdate.pathname)) {
+            // Clear the resync state and queue entry, we need to start over.
+            this.expandedUpdates = []
+            await clearResyncState(this.projectId)
+            await RedisManager.promises.deleteAppliedDocUpdate(
+              this.projectId,
+              update
+            )
+            throw new NeedFullProjectStructureResyncError(
+              'aborting partial resync: touched doc'
+            )
+          }
+        }
+      }
     } else if ('resyncDocContent' in update) {
       logger.debug(
         { projectId: this.projectId, update },
@@ -530,9 +591,10 @@ class SyncUpdateExpander {
         this.files[update.pathname] = File.fromString('')
       } else {
         update.file = entity.file
-        update.url = entity.url
-        update.hash = entity._hash
-        update.metadata = entity.metadata
+        if (entity.url) update.url = entity.url
+        if (entity._hash) update.hash = entity._hash
+        if (entity.createdBlob) update.createdBlob = entity.createdBlob
+        if (entity.metadata) update.metadata = entity.metadata
       }
 
       this.expandedUpdates.push(update)
@@ -619,10 +681,11 @@ class SyncUpdateExpander {
           ts: update.meta.ts,
         },
         file: entity.file,
-        url: entity.url,
-        hash: entity._hash,
-        metadata: entity.metadata,
       }
+      if (entity.url) addUpdate.url = entity.url
+      if (entity._hash) addUpdate.hash = entity._hash
+      if (entity.createdBlob) addUpdate.createdBlob = entity.createdBlob
+      if (entity.metadata) addUpdate.metadata = entity.metadata
       this.expandedUpdates.push(addUpdate)
       Metrics.inc('project_history_resync_operation', 1, {
         status: 'update binary file contents',
@@ -1093,6 +1156,7 @@ function trackingDirectivesEqual(a, b) {
 // EXPORTS
 
 const startResyncCb = callbackify(startResync)
+const startResyncWithoutLockCb = callbackify(startResyncWithoutLock)
 const startHardResyncCb = callbackify(startHardResync)
 const setResyncStateCb = callbackify(setResyncState)
 const clearResyncStateCb = callbackify(clearResyncState)
@@ -1100,15 +1164,31 @@ const skipUpdatesDuringSyncCb = callbackifyMultiResult(skipUpdatesDuringSync, [
   'updates',
   'syncState',
 ])
+
+/**
+ * @param {string} projectId
+ * @param {string} projectHistoryId
+ * @param {{chunk: import('overleaf-editor-core/lib/types.js').RawChunk}} mostRecentChunk
+ * @param {Array<Update>} updates
+ * @param {() => void} extendLock
+ * @param {(err: Error | null, updates?: Array<Update>) => void} callback
+ */
 const expandSyncUpdatesCb = (
   projectId,
   projectHistoryId,
+  mostRecentChunk,
   updates,
   extendLock,
   callback
 ) => {
   const extendLockPromises = promisify(extendLock)
-  expandSyncUpdates(projectId, projectHistoryId, updates, extendLockPromises)
+  expandSyncUpdates(
+    projectId,
+    projectHistoryId,
+    mostRecentChunk,
+    updates,
+    extendLockPromises
+  )
     .then(result => {
       callback(null, result)
     })
@@ -1119,6 +1199,7 @@ const expandSyncUpdatesCb = (
 
 export {
   startResyncCb as startResync,
+  startResyncWithoutLockCb as startResyncWithoutLock,
   startHardResyncCb as startHardResync,
   setResyncStateCb as setResyncState,
   clearResyncStateCb as clearResyncState,
@@ -1128,9 +1209,11 @@ export {
 
 export const promises = {
   startResync,
+  startResyncWithoutLock,
   startHardResync,
   setResyncState,
   clearResyncState,
+  clearResyncStateIfAllAfter,
   skipUpdatesDuringSync,
   expandSyncUpdates,
 }

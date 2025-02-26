@@ -29,13 +29,15 @@
           margin-right: 0;
         }
 
-        a {
+        a,
+        button {
           border: 0;
           border-radius: 0;
           color: var(--neutral-70);
           margin-right: unset;
           padding: var(--spacing-04);
           line-height: var(--line-height-03);
+          text-decoration: none;
 
           &:focus,
           &:hover {
@@ -59,11 +61,17 @@
         }
       }
 
-      li > a.active {
+      li > a.active,
+      li > button.active {
         background-color: transparent !important;
         border: 0 !important;
         border-bottom: 3px solid var(--green-50) !important;
         color: var(--neutral-90) !important;
+      }
+
+      &.align-left {
+        margin-left: 0;
+        margin-right: 0;
       }
     }
   }

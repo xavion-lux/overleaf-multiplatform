@@ -281,6 +281,7 @@ module.exports = {
         `http://${process.env.V1_HISTORY_HOST || '127.0.0.1'}:${
           process.env.V1_HISTORY_PORT || '3100'
         }/api`,
+      urlForGitBridge: process.env.V1_HISTORY_URL_FOR_GIT_BRIDGE,
       user: process.env.V1_HISTORY_USER || 'staging',
       pass:
         process.env.V1_HISTORY_PASS ||
@@ -949,19 +950,16 @@ module.exports = {
     tprFileViewRefreshError: [],
     tprFileViewRefreshButton: [],
     tprFileViewNotOriginalImporter: [],
-    newFilePromotions: [],
     contactUsModal: [],
     editorToolbarButtons: [],
     sourceEditorExtensions: [],
     sourceEditorComponents: [],
     pdfLogEntryComponents: [],
     pdfLogEntriesComponents: [],
-    pdfPreviewPromotions: [],
     diagnosticActions: [],
     sourceEditorCompletionSources: [],
     sourceEditorSymbolPalette: [],
     sourceEditorToolbarComponents: [],
-    editorPromotions: [],
     langFeedbackLinkingWidgets: [],
     labsExperiments: [],
     integrationLinkingWidgets: [],
@@ -982,6 +980,9 @@ module.exports = {
     autoCompleteExtensions: [],
     sectionTitleGenerators: [],
     toastGenerators: [],
+    editorSidebarComponents: [],
+    fileTreeToolbarComponents: [],
+    integrationPanelComponents: [],
   },
 
   moduleImportSequence: [
@@ -1005,7 +1006,7 @@ module.exports = {
 
   unsupportedBrowsers: {
     ie: '<=11',
-    safari: '<=13',
+    safari: '<=14',
   },
 
   // ID of the IEEE brand in the rails app

@@ -2,6 +2,7 @@
   flex: 1;
   margin-bottom: var(--spacing-06);
   background-color: var(--white);
+  padding: var(--spacing-04);
 
   .table {
     margin-bottom: initial;
@@ -9,18 +10,31 @@
 }
 
 .table {
-  tr {
-    &:last-child {
-      td {
-        border-bottom-width: 0;
-      }
-    }
-  }
-
   th,
   td {
     a {
       text-decoration: none;
+    }
+  }
+
+  tbody {
+    tr {
+      &:last-child {
+        td,
+        th {
+          border-bottom-width: 0;
+        }
+      }
+
+      th[scope='row'] {
+        font-weight: normal;
+      }
+
+      th {
+        .form-label {
+          font-weight: normal;
+        }
+      }
     }
   }
 }
@@ -33,17 +47,10 @@
   border-style: solid;
 }
 
-.table-hover {
-  th {
-    &:hover {
-      background-color: $table-hover-bg;
-    }
-  }
-}
-
 .table-striped {
   tr,
-  td {
+  td,
+  th {
     border-top-width: 0;
     border-bottom-width: 0;
   }

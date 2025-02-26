@@ -1,7 +1,7 @@
 import type { Preview } from '@storybook/react'
 
 // Storybook does not (currently) support async loading of "stories". Therefore
-// the strategy in frontend/js/i18n.js does not work (because we cannot wait on
+// the strategy in frontend/js/i18n.ts does not work (because we cannot wait on
 // the promise to resolve).
 // Therefore we have to use the synchronous method for configuring
 // react-i18next. Because this, we can only hard-code a single language.
@@ -139,7 +139,6 @@ const preview: Preview = {
         items: [
           { value: 'main-', title: 'Default' },
           { value: 'main-light-', title: 'Light' },
-          { value: 'main-ieee-', title: 'IEEE' },
         ],
       },
     },
@@ -154,10 +153,10 @@ const preview: Preview = {
         bootstrap3Style: await import(
           `!!to-string-loader!css-loader!less-loader!../../../services/web/frontend/stylesheets/${theme}style.less`
         ),
-        // NOTE: this uses `${theme}style.scss` rather than `${theme}.scss`
-        // so that webpack only bundles files ending with "style.scss"
+        // Themes are applied differently in Bootstrap 5 code
         bootstrap5Style: await import(
-          `!!to-string-loader!css-loader!resolve-url-loader!sass-loader!../../../services/web/frontend/stylesheets/bootstrap-5/${theme}style.scss`
+          // @ts-ignore
+          `!!to-string-loader!css-loader!resolve-url-loader!sass-loader!../../../services/web/frontend/stylesheets/bootstrap-5/main-style.scss`
         ),
       }
     },
@@ -175,14 +174,18 @@ const preview: Preview = {
       resetMeta(bootstrapVersion)
 
       return (
-        <>
+        <div
+          data-theme={
+            context.globals.theme === 'main-light-' ? 'light' : 'default'
+          }
+        >
           {activeStyle && <style>{activeStyle.default}</style>}
           <Story
             {...context}
             // force re-renders when switching between Bootstrap versions
             key={bootstrapVersion}
           />
-        </>
+        </div>
       )
     },
   ],

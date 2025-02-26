@@ -35,6 +35,7 @@ export type TextUpdate = {
   meta: UpdateMeta & {
     pathname: string
     doc_length: number
+    doc_hash?: string
     history_doc_length?: number
   }
 }
@@ -94,6 +95,9 @@ export type ResyncProjectStructureUpdate = {
   meta: {
     ts: string
   }
+  // optional fields for resyncProjectStructureOnly=true
+  resyncProjectStructureOnly?: boolean
+  _raw: string
 }
 
 export type ResyncDocContentUpdate = {
@@ -210,9 +214,10 @@ export type Doc = {
 
 export type File = {
   file: string
-  url: string
+  url?: string
   path: string
-  _hash: string
+  _hash?: string
+  createdBlob?: boolean
   metadata?: LinkedFileData
 }
 

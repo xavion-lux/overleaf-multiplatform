@@ -1,7 +1,8 @@
 mixin bookmarkable-tabset-header(id, title, active)
-	li(role="presentation" class=(active ? 'active' : ''))
-		a(
+	li(role="presentation")
+		a.nav-link(
 			href='#' + id
+			class=(active ? 'active' : '')
 			aria-controls=id
 			role="tab"
 			data-toggle="tab"

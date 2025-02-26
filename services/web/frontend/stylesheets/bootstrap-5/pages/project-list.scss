@@ -155,6 +155,9 @@
   .project-tools {
     flex-shrink: 0;
     margin-left: auto;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
   }
 
   @include media-breakpoint-down(md) {
@@ -668,10 +671,6 @@ form.project-search {
   .form-group {
     margin-bottom: 0;
   }
-}
-
-.project-search-clear-btn {
-  @include reset-button;
 }
 
 .add-affiliation-mobile-wrapper {

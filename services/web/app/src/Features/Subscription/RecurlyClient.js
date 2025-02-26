@@ -16,6 +16,7 @@ const {
   RecurlyPlan,
   RecurlyImmediateCharge,
 } = require('./RecurlyEntities')
+const { MissingBillingInfoError } = require('./Errors')
 
 /**
  * @import { RecurlySubscriptionChangeRequest } from './RecurlyEntities'
@@ -176,6 +177,16 @@ async function cancelSubscriptionByUuid(subscriptionUuid) {
   }
 }
 
+async function pauseSubscriptionByUuid(subscriptionUuid, pauseCycles) {
+  return await client.pauseSubscription('uuid-' + subscriptionUuid, {
+    remainingPauseCycles: pauseCycles,
+  })
+}
+
+async function resumeSubscriptionByUuid(subscriptionUuid) {
+  return await client.resumeSubscription('uuid-' + subscriptionUuid)
+}
+
 /**
  * Get the payment method for the given user
  *
@@ -183,7 +194,19 @@ async function cancelSubscriptionByUuid(subscriptionUuid) {
  * @return {Promise<PaymentMethod>}
  */
 async function getPaymentMethod(userId) {
-  const billingInfo = await client.getBillingInfo(`code-${userId}`)
+  let billingInfo
+
+  try {
+    billingInfo = await client.getBillingInfo(`code-${userId}`)
+  } catch (error) {
+    if (error instanceof recurly.errors.NotFoundError) {
+      throw new MissingBillingInfoError('This account has no billing info', {
+        userId,
+      })
+    }
+    throw error
+  }
+
   return paymentMethodFromApi(billingInfo)
 }
 
@@ -237,7 +260,8 @@ function subscriptionFromApi(apiSubscription) {
     apiSubscription.total == null ||
     apiSubscription.currency == null ||
     apiSubscription.currentPeriodStartedAt == null ||
-    apiSubscription.currentPeriodEndsAt == null
+    apiSubscription.currentPeriodEndsAt == null ||
+    apiSubscription.collectionMethod == null
   ) {
     throw new OError('Invalid Recurly subscription', {
       subscription: apiSubscription,
@@ -258,6 +282,7 @@ function subscriptionFromApi(apiSubscription) {
     currency: apiSubscription.currency,
     periodStart: apiSubscription.currentPeriodStartedAt,
     periodEnd: apiSubscription.currentPeriodEndsAt,
+    collectionMethod: apiSubscription.collectionMethod,
   })
 
   if (apiSubscription.pendingChange != null) {
@@ -339,6 +364,8 @@ function computeImmediateCharge(subscriptionChange) {
     subscriptionChange.invoiceCollection?.chargeInvoice?.subtotal ?? 0
   let tax = subscriptionChange.invoiceCollection?.chargeInvoice?.tax ?? 0
   let total = subscriptionChange.invoiceCollection?.chargeInvoice?.total ?? 0
+  let discount =
+    subscriptionChange.invoiceCollection?.chargeInvoice?.discount ?? 0
   for (const creditInvoice of subscriptionChange.invoiceCollection
     ?.creditInvoices ?? []) {
     // The credit invoice numbers are already negative
@@ -346,12 +373,13 @@ function computeImmediateCharge(subscriptionChange) {
     total = roundToTwoDecimal(total + (creditInvoice.total ?? 0))
     // Tax rate can be different in credit invoice if a user relocates
     tax = roundToTwoDecimal(tax + (creditInvoice.tax ?? 0))
+    discount = roundToTwoDecimal(discount + (creditInvoice.discount ?? 0))
   }
-
   return new RecurlyImmediateCharge({
     subtotal,
     total,
     tax,
+    discount,
   })
 }
 
@@ -459,6 +487,8 @@ module.exports = {
   getAddOn: callbackify(getAddOn),
   getPlan: callbackify(getPlan),
   subscriptionIsCanceledOrExpired,
+  pauseSubscriptionByUuid: callbackify(pauseSubscriptionByUuid),
+  resumeSubscriptionByUuid: callbackify(resumeSubscriptionByUuid),
 
   promises: {
     getSubscription,
@@ -471,6 +501,8 @@ module.exports = {
     removeSubscriptionChangeByUuid,
     reactivateSubscriptionByUuid,
     cancelSubscriptionByUuid,
+    pauseSubscriptionByUuid,
+    resumeSubscriptionByUuid,
     getPaymentMethod,
     getAddOn,
     getPlan,

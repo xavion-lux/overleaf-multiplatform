@@ -3,21 +3,29 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Row, Col } from 'react-bootstrap-5'
 import MaterialIcon from '@/shared/components/material-icon'
-import { formatCurrencyLocalized } from '@/shared/utils/currency'
+import { formatCurrency } from '@/shared/utils/currency'
 
-const LICENSE_ADD_ON = 'additional-license'
+export const LICENSE_ADD_ON = 'additional-license'
 
 function UpgradeSubscriptionPlanDetails() {
   const { t } = useTranslation()
   const preview = getMeta('ol-subscriptionChangePreview')
+  const totalLicenses = getMeta('ol-totalLicenses')
 
-  const licenseUnitPrice = useMemo(
-    () =>
-      preview.nextInvoice.addOns.filter(
-        addOn => addOn.code === LICENSE_ADD_ON
-      )[0].unitAmount,
-    [preview]
-  )
+  const licenseUnitPrice = useMemo(() => {
+    const additionalLicenseAddOn = preview.nextInvoice.addOns.filter(
+      addOn => addOn.code === LICENSE_ADD_ON
+    )
+    // Legacy plans might not have additional-license add-on.
+    // Hence we need to compute unit price
+    return additionalLicenseAddOn.length > 0
+      ? additionalLicenseAddOn[0].unitAmount
+      : preview.nextInvoice.plan.amount / totalLicenses
+  }, [
+    preview.nextInvoice.addOns,
+    preview.nextInvoice.plan.amount,
+    totalLicenses,
+  ])
 
   return (
     <Card
@@ -28,9 +36,9 @@ function UpgradeSubscriptionPlanDetails() {
         <b>{preview.nextInvoice.plan.name}</b>
         <Row xs="auto" className="gx-2">
           <Col>
-            <span className="per-user-price">
+            <span className="per-user-price" data-testid="per-user-price">
               <b>
-                {formatCurrencyLocalized(
+                {formatCurrency(
                   licenseUnitPrice,
                   preview.currency,
                   getMeta('ol-i18n')?.currentLangCode ?? 'en',

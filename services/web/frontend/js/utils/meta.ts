@@ -27,6 +27,7 @@ import { GetProjectsResponseBody } from '../../../types/project/dashboard/api'
 import { Tag } from '../../../app/src/Features/Tags/types'
 import { Institution } from '../../../types/institution'
 import {
+  GroupPolicy,
   ManagedGroupSubscription,
   MemberGroupSubscription,
 } from '../../../types/subscription/dashboard/subscription'
@@ -61,7 +62,9 @@ export interface Meta {
   'ol-brandVariation': Record<string, any>
 
   // dynamic keys based on permissions
+  'ol-canUseAddSeatsFeature': boolean
   'ol-canUseFlexibleLicensing': boolean
+  'ol-canUseFlexibleLicensingForConsolidatedPlans': boolean
   'ol-cannot-add-secondary-email': boolean
   'ol-cannot-change-password': boolean
   'ol-cannot-delete-own-account': boolean
@@ -72,6 +75,7 @@ export interface Meta {
   'ol-cannot-reactivate-subscription': boolean
   'ol-cannot-use-ai': boolean
   'ol-chatEnabled': boolean
+  'ol-compilesUserContentDomain': string
   'ol-countryCode': PricingFormState['country']
   'ol-couponCode': PricingFormState['coupon']
   'ol-createdAt': Date
@@ -98,8 +102,10 @@ export interface Meta {
   'ol-groupId': string
   'ol-groupName': string
   'ol-groupPlans': GroupPlans
+  'ol-groupPolicy': GroupPolicy
   'ol-groupSSOActive': boolean
   'ol-groupSSOTestResult': GroupSSOTestResult
+  'ol-groupSettingsAdvertisedFor': string[]
   'ol-groupSettingsEnabledFor': string[]
   'ol-groupSize': number
   'ol-groupSsoSetupSuccess': boolean
@@ -120,6 +126,7 @@ export interface Meta {
   'ol-inviterName': string
   'ol-isExternalAuthenticationSystemUsed': boolean
   'ol-isManagedAccount': boolean
+  'ol-isPaywallChangeCompileTimeoutEnabled': boolean
   'ol-isProfessional': boolean
   'ol-isRegisteredViaGoogle': boolean
   'ol-isRestrictedTokenMember': boolean
@@ -133,8 +140,6 @@ export interface Meta {
   'ol-learnedWords': string[]
   'ol-legacyEditorThemes': string[]
   'ol-licenseQuantity': number | undefined
-  'ol-linkSharingEnforcement': boolean
-  'ol-linkSharingWarning': boolean
   'ol-loadingText': string
   'ol-managedGroupSubscriptions': ManagedGroupSubscription[]
   'ol-managedInstitutions': ManagedInstitution[]
@@ -152,8 +157,10 @@ export interface Meta {
   'ol-notifications': NotificationType[]
   'ol-notificationsInstitution': InstitutionType[]
   'ol-oauthProviders': OAuthProviders
+  'ol-odcRole': string
   'ol-overallThemes': OverallThemeMeta[]
   'ol-passwordStrengthOptions': PasswordStrengthOptions
+  'ol-paywallPlans': { [key: string]: string }
   'ol-personalAccessTokens': AccessToken[] | undefined
   'ol-plan': Plan
   'ol-planCode': string
@@ -163,8 +170,11 @@ export interface Meta {
   'ol-postCheckoutRedirect': string
   'ol-postUrl': string
   'ol-prefetchedProjectsBlob': GetProjectsResponseBody | undefined
+  'ol-preventCompileOnLoad'?: boolean
   'ol-primaryEmail': { email: string; confirmed: boolean }
   'ol-project': any // TODO
+  'ol-projectHistoryBlobsEnabled': boolean
+  'ol-projectName': string
   'ol-projectSyncSuccessMessage': string
   'ol-projectTags': Tag[]
   'ol-project_id': string
@@ -230,6 +240,22 @@ export interface Meta {
   'ol-writefullJsUrl': string
   'ol-wsUrl': string
 }
+
+type DeepPartial<T> =
+  T extends Record<string, any> ? { [P in keyof T]?: DeepPartial<T[P]> } : T
+
+export type PartialMeta = DeepPartial<Meta>
+
+export type MetaAttributesCache<
+  K extends keyof PartialMeta = keyof PartialMeta,
+> = Map<K, PartialMeta[K]>
+
+export type MetaTag = {
+  [K in keyof Meta]: {
+    name: K
+    value: Meta[K]
+  }
+}[keyof Meta]
 
 // cache for parsed values
 window.metaAttributesCache = window.metaAttributesCache || new Map()

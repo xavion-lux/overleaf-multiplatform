@@ -1,6 +1,6 @@
 import { Trans, useTranslation } from 'react-i18next'
 import { Card, ListGroup } from 'react-bootstrap-5'
-import { formatCurrencyLocalized } from '@/shared/utils/currency'
+import { formatCurrency } from '@/shared/utils/currency'
 import { formatTime } from '@/features/utils/format-date'
 import {
   AddOnUpdate,
@@ -18,6 +18,7 @@ type CostSummaryProps = {
 
 function CostSummary({ subscriptionChange, totalLicenses }: CostSummaryProps) {
   const { t } = useTranslation()
+  const factor = 100
 
   return (
     <Card
@@ -67,22 +68,38 @@ function CostSummary({ subscriptionChange, totalLicenses }: CostSummaryProps) {
                     {t('seats')}
                   </span>
                   <span data-testid="price">
-                    {formatCurrencyLocalized(
+                    {formatCurrency(
                       subscriptionChange.immediateCharge.subtotal,
                       subscriptionChange.currency
                     )}
                   </span>
                 </ListGroup.Item>
+                {subscriptionChange.immediateCharge.discount !== 0 && (
+                  <ListGroup.Item className="bg-transparent border-0 px-0 gap-3 card-description-secondary">
+                    <span className="me-auto">{t('discount')}</span>
+                    <span data-testid="discount">
+                      (
+                      {formatCurrency(
+                        subscriptionChange.immediateCharge.discount,
+                        subscriptionChange.currency
+                      )}
+                      )
+                    </span>
+                  </ListGroup.Item>
+                )}
                 <ListGroup.Item
                   className="bg-transparent border-0 px-0 gap-3 card-description-secondary"
                   data-testid="tax"
                 >
                   <span className="me-auto">
-                    {t('sales_tax')} &middot;{' '}
-                    {subscriptionChange.nextInvoice.tax.rate * 100}%
+                    {t('vat')} &middot;{' '}
+                    {Math.round(
+                      subscriptionChange.nextInvoice.tax.rate * 100 * factor
+                    ) / factor}
+                    %
                   </span>
                   <span data-testid="price">
-                    {formatCurrencyLocalized(
+                    {formatCurrency(
                       subscriptionChange.immediateCharge.tax,
                       subscriptionChange.currency
                     )}
@@ -94,7 +111,7 @@ function CostSummary({ subscriptionChange, totalLicenses }: CostSummaryProps) {
                 >
                   <strong className="me-auto">{t('total_due_today')}</strong>
                   <strong data-testid="price">
-                    {formatCurrencyLocalized(
+                    {formatCurrency(
                       subscriptionChange.immediateCharge.total,
                       subscriptionChange.currency
                     )}
@@ -110,10 +127,18 @@ function CostSummary({ subscriptionChange, totalLicenses }: CostSummaryProps) {
             </div>
             <div>
               {t(
-                'after_that_well_bill_you_x_annually_on_date_unless_you_cancel',
+                'after_that_well_bill_you_x_total_y_subtotal_z_tax_annually_on_date_unless_you_cancel',
                 {
-                  subtotal: formatCurrencyLocalized(
+                  totalAmount: formatCurrency(
                     subscriptionChange.nextInvoice.total,
+                    subscriptionChange.currency
+                  ),
+                  subtotalAmount: formatCurrency(
+                    subscriptionChange.nextInvoice.subtotal,
+                    subscriptionChange.currency
+                  ),
+                  taxAmount: formatCurrency(
+                    subscriptionChange.nextInvoice.tax.amount,
                     subscriptionChange.currency
                   ),
                   date: formatTime(
@@ -122,6 +147,8 @@ function CostSummary({ subscriptionChange, totalLicenses }: CostSummaryProps) {
                   ),
                 }
               )}
+              {subscriptionChange.immediateCharge.discount !== 0 &&
+                ` ${t('coupons_not_included')}.`}
             </div>
           </>
         )}

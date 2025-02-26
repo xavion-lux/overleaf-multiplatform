@@ -19,9 +19,9 @@ const entryPoints = {
   tracing: './frontend/js/tracing.js',
   'bootstrap-3': './frontend/js/bootstrap-3.ts',
   'bootstrap-5': './frontend/js/bootstrap-5.ts',
-  devToolbar: './frontend/js/dev-toolbar.js',
-  'ide-detached': './frontend/js/ide-detached.js',
-  marketing: './frontend/js/marketing.js',
+  devToolbar: './frontend/js/dev-toolbar.ts',
+  'ide-detached': './frontend/js/ide-detached.ts',
+  marketing: './frontend/js/marketing.ts',
   'main-style': './frontend/stylesheets/main-style.less',
   'main-ieee-style': './frontend/stylesheets/main-ieee-style.less',
   'main-light-style': './frontend/stylesheets/main-light-style.less',
@@ -185,7 +185,7 @@ module.exports = {
               // bring up more workers after they timed out
               poolRespawn: true,
               // limit concurrency (one per entrypoint and let the small includes queue up)
-              workers: 6,
+              workers: process.env.NODE_ENV === 'test' ? 1 : 6,
             },
           },
           // Compiles the Less syntax to CSS

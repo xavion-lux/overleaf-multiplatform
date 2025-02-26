@@ -6,6 +6,7 @@ const PlansLocator = require('./PlansLocator')
 const SubscriptionHelper = require('./SubscriptionHelper')
 
 const AI_ADD_ON_CODE = 'assistant'
+const MEMBERS_LIMIT_ADD_ON_CODE = 'additional-license'
 const STANDALONE_AI_ADD_ON_CODES = ['assistant', 'assistant-annual']
 
 class RecurlySubscription {
@@ -24,6 +25,7 @@ class RecurlySubscription {
    * @param {number} props.total
    * @param {Date} props.periodStart
    * @param {Date} props.periodEnd
+   * @param {string} props.collectionMethod
    * @param {RecurlySubscriptionChange} [props.pendingChange]
    */
   constructor(props) {
@@ -40,6 +42,7 @@ class RecurlySubscription {
     this.total = props.total
     this.periodStart = props.periodStart
     this.periodEnd = props.periodEnd
+    this.collectionMethod = props.collectionMethod
     this.pendingChange = props.pendingChange ?? null
   }
 
@@ -129,12 +132,13 @@ class RecurlySubscription {
    *
    * @param {string} code
    * @param {number} [quantity]
+   * @param {number} [unitPrice]
    * @return {RecurlySubscriptionChangeRequest} - the change request to send to
    * Recurly
    *
    * @throws {DuplicateAddOnError} if the add-on is already present on the subscription
    */
-  getRequestForAddOnPurchase(code, quantity = 1) {
+  getRequestForAddOnPurchase(code, quantity = 1, unitPrice) {
     if (this.hasAddOn(code)) {
       throw new DuplicateAddOnError('Subscription already has add-on', {
         subscriptionId: this.id,
@@ -143,7 +147,9 @@ class RecurlySubscription {
     }
 
     const addOnUpdates = this.addOns.map(addOn => addOn.toAddOnUpdate())
-    addOnUpdates.push(new RecurlySubscriptionAddOnUpdate({ code, quantity }))
+    addOnUpdates.push(
+      new RecurlySubscriptionAddOnUpdate({ code, quantity, unitPrice })
+    )
     return new RecurlySubscriptionChangeRequest({
       subscription: this,
       timeframe: 'now',
@@ -223,9 +229,9 @@ class RecurlySubscription {
    * @param {string} newPlanCode
    * @return {RecurlySubscriptionChangeRequest}
    */
-  getRequestForFlexibleLicensingGroupPlanUpgrade(newPlanCode) {
+  getRequestForGroupPlanUpgrade(newPlanCode) {
     // Ensure all the existing add-ons are added to the new plan
-    const existingAddOns = this.addOns.map(
+    const addOns = this.addOns.map(
       addOn =>
         new RecurlySubscriptionAddOnUpdate({
           code: addOn.code,
@@ -236,9 +242,18 @@ class RecurlySubscription {
     return new RecurlySubscriptionChangeRequest({
       subscription: this,
       timeframe: 'now',
-      addOnUpdates: existingAddOns,
+      addOnUpdates: addOns,
       planCode: newPlanCode,
     })
+  }
+
+  /**
+   * Returns whether this subscription is manually collected
+   *
+   * @return {boolean}
+   */
+  get isCollectionMethodManual() {
+    return this.collectionMethod === 'manual'
   }
 }
 
@@ -324,7 +339,7 @@ class RecurlySubscriptionChange {
     this.nextAddOns = props.nextAddOns
     this.immediateCharge =
       props.immediateCharge ??
-      new RecurlyImmediateCharge({ subtotal: 0, tax: 0, total: 0 })
+      new RecurlyImmediateCharge({ subtotal: 0, tax: 0, total: 0, discount: 0 })
 
     this.subtotal = this.nextPlanPrice
     for (const addOn of this.nextAddOns) {
@@ -369,11 +384,13 @@ class RecurlyImmediateCharge {
    * @param {number} props.subtotal
    * @param {number} props.tax
    * @param {number} props.total
+   * @param {number} props.discount
    */
   constructor(props) {
     this.subtotal = props.subtotal
     this.tax = props.tax
     this.total = props.total
+    this.discount = props.discount
   }
 }
 
@@ -418,6 +435,8 @@ function isStandaloneAiAddOnPlanCode(planCode) {
 
 module.exports = {
   AI_ADD_ON_CODE,
+  MEMBERS_LIMIT_ADD_ON_CODE,
+  STANDALONE_AI_ADD_ON_CODES,
   RecurlySubscription,
   RecurlySubscriptionAddOn,
   RecurlySubscriptionChange,

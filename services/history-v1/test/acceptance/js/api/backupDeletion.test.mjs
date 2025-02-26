@@ -50,7 +50,7 @@ async function deleteProject(projectId) {
 }
 
 /**
- * @param {string|ObjectId} historyId
+ * @param {number|ObjectId} historyId
  * @return {Promise<void>}
  */
 async function expectToHaveBackup(historyId) {
@@ -61,7 +61,7 @@ async function expectToHaveBackup(historyId) {
 }
 
 /**
- * @param {string|ObjectId} historyId
+ * @param {number|ObjectId} historyId
  * @return {Promise<void>}
  */
 async function expectToHaveNoBackup(historyId) {
@@ -90,19 +90,13 @@ describe('backupDeletion', function () {
   })
 
   describe('DELETE /project/:projectId', function () {
-    const postgresHistoryId = '1'
+    const postgresHistoryId = 1
     const projectIdPostgres = new ObjectId('000000000000000000000001')
     const projectIdMongoDB = new ObjectId('000000000000000000000002')
     const projectIdNonDeleted = new ObjectId('000000000000000000000003')
     const projectIdNonExpired = new ObjectId('000000000000000000000004')
     const projectIdWithChunks = new ObjectId('000000000000000000000005')
     const projectIdNoHistoryId = new ObjectId('000000000000000000000006')
-
-    beforeEach('cleanup s3 buckets', async function () {
-      await backupPersistor.deleteDirectory(deksBucket, '')
-      await backupPersistor.deleteDirectory(chunksBucket, '')
-      await backupPersistor.deleteDirectory(projectBlobsBucket, '')
-    })
 
     beforeEach('populate mongo', async function () {
       await deletedProjectsCollection.insertMany([

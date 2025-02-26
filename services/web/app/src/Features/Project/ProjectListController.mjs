@@ -149,7 +149,8 @@ async function projectListPage(req, res, next) {
       // TODO use helper function
       if (!user.enrollment?.managedBy) {
         groupSubscriptionsPendingEnrollment = subscriptions.filter(
-          subscription => subscription.groupPlan && subscription.groupPolicy
+          subscription =>
+            subscription.groupPlan && subscription.managedUsersEnabled
         )
       }
     } catch (error) {
@@ -370,23 +371,6 @@ async function projectListPage(req, res, next) {
     showGroupsAndEnterpriseBanner &&
     _.sample(['on-premise', 'FOMO', 'FOMO', 'FOMO'])
 
-  let showWritefullPromoBanner = false
-  if (Features.hasFeature('saas') && !req.session.justRegistered) {
-    try {
-      const { variant } = await SplitTestHandler.promises.getAssignment(
-        req,
-        res,
-        'writefull-promo-banner'
-      )
-      showWritefullPromoBanner = variant === 'enabled'
-    } catch (error) {
-      logger.warn(
-        { err: error },
-        'failed to get "writefull-promo-banner" split test assignment'
-      )
-    }
-  }
-
   let showInrGeoBanner = false
   let showBrlGeoBanner = false
   let showLATAMBanner = false
@@ -461,7 +445,6 @@ async function projectListPage(req, res, next) {
     groupsAndEnterpriseBannerVariant,
     showUSGovBanner,
     usGovBannerVariant,
-    showWritefullPromoBanner,
     showLATAMBanner,
     recommendedCurrency,
     showInrGeoBanner,

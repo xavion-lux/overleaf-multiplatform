@@ -138,6 +138,24 @@ class SAMLMissingSignatureError extends SAMLAuthenticationError {
   }
 }
 
+class SAMLInvalidUserIdentifierError extends SAMLAuthenticationError {
+  get i18nKey() {
+    return 'saml_authentication_required_error'
+  }
+}
+
+class SAMLInvalidUserAttributeError extends SAMLAuthenticationError {
+  get i18nKey() {
+    return 'saml_authentication_required_error'
+  }
+}
+
+class SAMLMissingUserIdentifierError extends SAMLAuthenticationError {
+  get i18nKey() {
+    return 'saml_missing_user_attribute'
+  }
+}
+
 class SAMLInvalidResponseError extends SAMLAuthenticationError {}
 
 class SAMLResponseAlreadyProcessedError extends SAMLInvalidResponseError {
@@ -190,6 +208,8 @@ class SAMLSessionDataMissing extends BackwardCompatibleError {
     }
   }
 }
+
+class SAMLProviderRequesterError extends SAMLAuthenticationError {}
 
 class ThirdPartyIdentityExistsError extends BackwardCompatibleError {
   constructor(arg) {
@@ -268,6 +288,12 @@ class InvalidInstitutionalEmailError extends OError {
   }
 }
 
+class NonDeletableEntityError extends OError {
+  get i18nKey() {
+    return 'non_deletable_entity'
+  }
+}
+
 module.exports = {
   OError,
   BackwardCompatibleError,
@@ -299,8 +325,12 @@ module.exports = {
   SAMLGroupSSOLoginIdentityMismatchError,
   SAMLGroupSSOLoginIdentityNotFoundError,
   SAMLGroupSSODisabledError,
+  SAMLInvalidUserAttributeError,
+  SAMLInvalidUserIdentifierError,
   SAMLInvalidSignatureError,
+  SAMLMissingUserIdentifierError,
   SAMLMissingSignatureError,
+  SAMLProviderRequesterError,
   SAMLInvalidResponseError,
   SAMLLoginFailureError,
   SAMLEmailNotRecognizedError,
@@ -318,4 +348,5 @@ module.exports = {
   AffiliationError,
   InvalidEmailError,
   InvalidInstitutionalEmailError,
+  NonDeletableEntityError,
 }

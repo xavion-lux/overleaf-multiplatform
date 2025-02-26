@@ -16,7 +16,7 @@ const HttpErrorHandler = require('../Errors/HttpErrorHandler')
 const OError = require('@overleaf/o-error')
 const EmailHandler = require('../Email/EmailHandler')
 const UrlHelper = require('../Helpers/UrlHelper')
-const { promisify, callbackify } = require('util')
+const { promisify } = require('util')
 const { expressify } = require('@overleaf/promise-utils')
 const {
   acceptsJson,
@@ -202,7 +202,7 @@ async function ensureAffiliationMiddleware(req, res, next) {
   try {
     user = await UserGetter.promises.getUser(userId)
   } catch (error) {
-    return new Errors.UserNotFoundError({ info: { userId } })
+    throw new Errors.UserNotFoundError({ info: { userId } })
   }
   // if the user does not have permission to add an affiliation, we skip this middleware
   try {
@@ -212,11 +212,7 @@ async function ensureAffiliationMiddleware(req, res, next) {
       return next()
     }
   }
-  try {
-    await ensureAffiliation(user)
-  } catch (error) {
-    return next(error)
-  }
+  await ensureAffiliation(user)
   return next()
 }
 
@@ -270,7 +266,8 @@ async function tryDeleteUser(req, res, next) {
       errorData.info.public = {
         error: 'SubscriptionAdminDeletionError',
       }
-      logger.warn(OError.tag(err, errorData.message, errorData.info))
+      const error = OError.tag(err, errorData.message, errorData.info)
+      logger.warn({ error, req }, error.message)
       return HttpErrorHandler.unprocessableEntity(
         req,
         res,
@@ -390,6 +387,11 @@ async function updateUserSettings(req, res, next) {
   if (req.body.mathPreview != null) {
     user.ace.mathPreview = req.body.mathPreview
   }
+  if (req.body.referencesSearchMode != null) {
+    const mode =
+      req.body.referencesSearchMode === 'simple' ? 'simple' : 'advanced'
+    user.ace.referencesSearchMode = mode
+  }
   await user.save()
 
   const newEmail = req.body.email?.trim().toLowerCase()
@@ -505,13 +507,9 @@ module.exports = {
   subscribe: expressify(subscribe),
   unsubscribe: expressify(unsubscribe),
   updateUserSettings: expressify(updateUserSettings),
-  doLogout: callbackify(doLogout),
   logout: expressify(logout),
   expireDeletedUser: expressify(expireDeletedUser),
   expireDeletedUsersAfterDuration: expressify(expireDeletedUsersAfterDuration),
-  promises: {
-    doLogout,
-    ensureAffiliation,
-    ensureAffiliationMiddleware,
-  },
+  ensureAffiliationMiddleware: expressify(ensureAffiliationMiddleware),
+  ensureAffiliation,
 }

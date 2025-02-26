@@ -2,7 +2,19 @@ import countries from '@/features/subscription/data/countries'
 import { Plan } from './plan'
 import { SubscriptionPricingStateTax } from 'recurly__recurly-js'
 import { SubscriptionPricingInstanceCustom } from '../recurly/pricing/subscription'
-import { currencies, CurrencyCode, CurrencySymbol } from './currency'
+import { currencies, CurrencyCode } from './currency'
+
+export type RecurlyPrice =
+  | {
+      subtotal: string
+      plan: string
+      addons: string
+      setup_fee: string
+      discount: string
+      tax: string
+      total: string
+    }
+  | undefined
 
 export type PricingFormState = {
   first_name: string
@@ -23,7 +35,6 @@ export type PaymentContextValue = {
   setCurrencyCode: React.Dispatch<
     React.SetStateAction<PaymentContextValue['currencyCode']>
   >
-  currencySymbol: CurrencySymbol
   limitedCurrencies: Partial<typeof currencies>
   pricingFormState: PricingFormState
   setPricingFormState: React.Dispatch<
@@ -36,17 +47,7 @@ export type PaymentContextValue = {
   pricing: React.MutableRefObject<SubscriptionPricingInstanceCustom | undefined>
   recurlyLoading: boolean
   recurlyLoadError: boolean
-  recurlyPrice:
-    | {
-        subtotal: string
-        plan: string
-        addons: string
-        setup_fee: string
-        discount: string
-        tax: string
-        total: string
-      }
-    | undefined
+  recurlyPrice: RecurlyPrice
   monthlyBilling: boolean | undefined
   taxes: SubscriptionPricingStateTax[]
   coupon:
@@ -66,4 +67,11 @@ export type PaymentContextValue = {
   changeCurrency: (newCurrency: CurrencyCode) => void
   updateCountry: (country: PricingFormState['country']) => void
   userCanNotStartRequestedTrial: boolean
+  showStudentConfirmation: boolean
+  studentConfirmationChecked: boolean
+  setStudentConfirmationChecked: React.Dispatch<
+    React.SetStateAction<PaymentContextValue['studentConfirmationChecked']>
+  >
+  updatePlan: (newPlanCode: string) => void
+  showNudgeToAnnualText: boolean
 }

@@ -1,8 +1,4 @@
-import {
-  FontFamily,
-  LineHeight,
-  OverallTheme,
-} from '@/features/source-editor/extensions/theme'
+import { FontFamily, LineHeight, OverallTheme } from '@/shared/utils/styles'
 
 export type Keybindings = 'none' | 'default' | 'vim' | 'emacs'
 export type PdfViewer = 'pdfjs' | 'native'
@@ -19,4 +15,5 @@ export type UserSettings = {
   fontFamily: FontFamily
   lineHeight: LineHeight
   mathPreview: boolean
+  referencesSearchMode: 'advanced' | 'simple'
 }

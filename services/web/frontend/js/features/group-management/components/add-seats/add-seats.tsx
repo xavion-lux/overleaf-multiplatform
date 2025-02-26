@@ -27,15 +27,22 @@ import {
   AddOnUpdate,
   SubscriptionChangePreview,
 } from '../../../../../../types/subscription/subscription-change-preview'
-import { MergeAndOverride } from '../../../../../../types/utils'
+import { MergeAndOverride, Nullable } from '../../../../../../types/utils'
+import { sendMB } from '../../../../infrastructure/event-tracking'
 
 export const MAX_NUMBER_OF_USERS = 50
+
+type CostSummaryData = MergeAndOverride<
+  SubscriptionChangePreview,
+  { change: AddOnUpdate }
+>
 
 function AddSeats() {
   const { t } = useTranslation()
   const groupName = getMeta('ol-groupName')
   const subscriptionId = getMeta('ol-subscriptionId')
   const totalLicenses = Number(getMeta('ol-totalLicenses'))
+  const isProfessional = getMeta('ol-isProfessional')
   const [addSeatsInputError, setAddSeatsInputError] = useState<string>()
   const [shouldContactSales, setShouldContactSales] = useState(false)
   const controller = useAbortController()
@@ -43,12 +50,11 @@ function AddSeats() {
   const { signal: contactSalesSignal } = useAbortController()
   const {
     isLoading: isLoadingCostSummary,
+    isError: isErrorCostSummary,
     runAsync: runAsyncCostSummary,
     data: costSummaryData,
     reset: resetCostSummaryData,
-  } = useAsync<
-    MergeAndOverride<SubscriptionChangePreview, { change: AddOnUpdate }>
-  >()
+  } = useAsync<CostSummaryData>()
   const {
     isLoading: isAddingSeats,
     isError: isErrorAddingSeats,
@@ -84,6 +90,17 @@ function AddSeats() {
     [runAsyncCostSummary]
   )
 
+  const debouncedTrackUserEnterSeatNumberEvent = useMemo(
+    () =>
+      debounce((value: number) => {
+        sendMB('flex-add-users-form', {
+          action: 'enter-seat-number',
+          seatNumber: value,
+        })
+      }, 500),
+    []
+  )
+
   const validateSeats = async (value: string | undefined) => {
     try {
       await addSeatsValidationSchema.validate(value)
@@ -108,6 +125,7 @@ function AddSeats() {
 
     if (isValidSeatsNumber) {
       const seats = Number(value)
+      debouncedTrackUserEnterSeatNumberEvent(seats)
 
       if (seats > MAX_NUMBER_OF_USERS) {
         debouncedCostSummaryRequest.cancel()
@@ -116,6 +134,7 @@ function AddSeats() {
         debouncedCostSummaryRequest(seats, controller.signal)
       }
     } else {
+      debouncedTrackUserEnterSeatNumberEvent.cancel()
       debouncedCostSummaryRequest.cancel()
     }
 
@@ -137,6 +156,9 @@ function AddSeats() {
     }
 
     if (shouldContactSales) {
+      sendMB('flex-add-users-form', {
+        action: 'click-send-request-button',
+      })
       const post = postJSON(
         '/user/subscription/group/add-users/sales-contact-form',
         {
@@ -148,11 +170,21 @@ function AddSeats() {
       )
       runAsyncSendMailToSales(post).catch(debugConsole.error)
     } else {
+      sendMB('flex-add-users-form', {
+        action: 'click-add-user-button',
+      })
       const post = postJSON('/user/subscription/group/add-users/create', {
         signal: addSeatsSignal,
         body: { adding: Number(rawSeats) },
       })
-      runAsyncAddSeats(post).catch(debugConsole.error)
+      runAsyncAddSeats(post)
+        .then(() => {
+          sendMB('flex-add-users-success')
+        })
+        .catch(() => {
+          debugConsole.error()
+          sendMB('flex-add-users-error')
+        })
     }
   }
 
@@ -258,8 +290,17 @@ function AddSeats() {
                   <div>
                     <Trans
                       i18nKey="if_you_want_to_reduce_the_number_of_users_please_contact_support"
-                      // eslint-disable-next-line jsx-a11y/anchor-has-content, react/jsx-key
-                      components={[<a href="/contact" />]}
+                      components={[
+                        // eslint-disable-next-line jsx-a11y/anchor-has-content, react/jsx-key
+                        <a
+                          href="/contact"
+                          onClick={() => {
+                            sendMB('flex-add-users-form', {
+                              action: 'click-contact-customer-support-link',
+                            })
+                          }}
+                        />,
+                      ]}
                     />
                   </div>
                 </div>
@@ -282,39 +323,35 @@ function AddSeats() {
                     )}
                   </FormGroup>
                 </div>
-                {isLoadingCostSummary ? (
-                  <LoadingSpinner className="ms-auto me-auto" />
-                ) : shouldContactSales ? (
-                  <div>
-                    <Notification
-                      content={
-                        <Trans
-                          i18nKey="if_you_want_more_than_x_users_on_your_plan_we_need_to_add_them_for_you"
-                          // eslint-disable-next-line react/jsx-key
-                          components={[<b />]}
-                          values={{ count: 50 }}
-                          shouldUnescape
-                          tOptions={{ interpolation: { escapeValue: true } }}
-                        />
-                      }
-                      type="info"
-                    />
-                  </div>
-                ) : (
-                  <CostSummary
-                    subscriptionChange={costSummaryData}
-                    totalLicenses={totalLicenses}
-                  />
-                )}
+                <CostSummarySection
+                  isLoadingCostSummary={isLoadingCostSummary}
+                  isErrorCostSummary={isErrorCostSummary}
+                  shouldContactSales={shouldContactSales}
+                  costSummaryData={costSummaryData}
+                  totalLicenses={totalLicenses}
+                />
                 <div className="d-flex align-items-center justify-content-end gap-2">
-                  <a
-                    href="/user/subscription/group/upgrade-subscription"
-                    rel="noreferrer noopener"
-                    className="me-auto"
+                  {!isProfessional && (
+                    <a
+                      href="/user/subscription/group/upgrade-subscription"
+                      rel="noreferrer noopener"
+                      className="me-auto"
+                      onClick={() => {
+                        sendMB('flex-upgrade')
+                      }}
+                    >
+                      {t('upgrade_my_plan')}
+                    </a>
+                  )}
+                  <Button
+                    variant="secondary"
+                    href="/user/subscription"
+                    onClick={() =>
+                      sendMB('flex-add-users-form', {
+                        action: 'click-cancel-button',
+                      })
+                    }
                   >
-                    {t('upgrade_my_plan')}
-                  </a>
-                  <Button variant="secondary" href="/user/subscription">
                     {t('cancel')}
                   </Button>
                   <Button
@@ -336,6 +373,59 @@ function AddSeats() {
         </Col>
       </Row>
     </div>
+  )
+}
+
+type CostSummarySectionProps = {
+  isLoadingCostSummary: boolean
+  isErrorCostSummary: boolean
+  shouldContactSales: boolean
+  costSummaryData: Nullable<CostSummaryData>
+  totalLicenses: number
+}
+
+function CostSummarySection({
+  isLoadingCostSummary,
+  isErrorCostSummary,
+  shouldContactSales,
+  costSummaryData,
+  totalLicenses,
+}: CostSummarySectionProps) {
+  const { t } = useTranslation()
+
+  if (isLoadingCostSummary) {
+    return <LoadingSpinner className="ms-auto me-auto" />
+  }
+
+  if (shouldContactSales) {
+    return (
+      <Notification
+        content={
+          <Trans
+            i18nKey="if_you_want_more_than_x_users_on_your_plan_we_need_to_add_them_for_you"
+            // eslint-disable-next-line react/jsx-key
+            components={[<b />]}
+            values={{ count: 50 }}
+            shouldUnescape
+            tOptions={{ interpolation: { escapeValue: true } }}
+          />
+        }
+        type="info"
+      />
+    )
+  }
+
+  if (isErrorCostSummary) {
+    return (
+      <Notification type="error" content={t('generic_something_went_wrong')} />
+    )
+  }
+
+  return (
+    <CostSummary
+      subscriptionChange={costSummaryData}
+      totalLicenses={totalLicenses}
+    />
   )
 }
 

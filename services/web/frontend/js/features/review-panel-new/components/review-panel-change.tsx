@@ -10,12 +10,14 @@ import classnames from 'classnames'
 import { usePermissionsContext } from '@/features/ide-react/context/permissions-context'
 import OLTooltip from '@/features/ui/components/ol/ol-tooltip'
 import MaterialIcon from '@/shared/components/material-icon'
-import { formatTimeBasedOnYear } from '@/features/utils/format-date'
+import { FormatTimeBasedOnYear } from '@/shared/components/format-time-based-on-year'
 import { useChangesUsersContext } from '../context/changes-users-context'
 import { ReviewPanelChangeUser } from './review-panel-change-user'
 import { ReviewPanelEntry } from './review-panel-entry'
 import { useModalsContext } from '@/features/ide-react/context/modals-context'
 import { ExpandableContent } from './review-panel-expandable-content'
+import { useUserContext } from '@/shared/context/user-context'
+import { PreventSelectingEntry } from './review-panel-prevent-selecting'
 
 export const ReviewPanelChange = memo<{
   change: Change<EditOperation>
@@ -25,8 +27,8 @@ export const ReviewPanelChange = memo<{
   docId: string
   hoverRanges?: boolean
   hovered?: boolean
-  onEnter?: () => void
-  onLeave?: () => void
+  onEnter?: (changeId: string) => void
+  onLeave?: (changeId: string) => void
 }>(
   ({
     change,
@@ -44,6 +46,7 @@ export const ReviewPanelChange = memo<{
     const permissions = usePermissionsContext()
     const changesUsers = useChangesUsersContext()
     const { showGenericMessageModal } = useModalsContext()
+    const user = useUserContext()
 
     const [accepting, setAccepting] = useState(false)
 
@@ -70,6 +73,8 @@ export const ReviewPanelChange = memo<{
       return null
     }
 
+    const isChangeAuthor = change.metadata?.user_id === user.id
+
     return (
       <ReviewPanelEntry
         className={classnames('review-panel-entry-change', {
@@ -84,67 +89,78 @@ export const ReviewPanelChange = memo<{
         docId={docId}
         hoverRanges={hoverRanges}
         disabled={accepting}
-        onEnterEntryIndicator={onEnter}
-        onLeaveEntryIndicator={onLeave}
+        onEnterEntryIndicator={onEnter && (() => onEnter(change.id))}
+        onLeaveEntryIndicator={onLeave && (() => onLeave(change.id))}
         entryIndicator="edit"
       >
         <div
           className="review-panel-entry-content"
-          onMouseEnter={onEnter}
-          onMouseLeave={onLeave}
+          onMouseEnter={onEnter && (() => onEnter(change.id))}
+          onMouseLeave={onLeave && (() => onLeave(change.id))}
         >
           <div className="review-panel-entry-header">
             <div>
               <ReviewPanelChangeUser change={change} />
-              <div className="review-panel-entry-time">
-                {formatTimeBasedOnYear(change.metadata?.ts)}
-              </div>
+              {change.metadata?.ts && (
+                <div className="review-panel-entry-time">
+                  <FormatTimeBasedOnYear date={change.metadata.ts} />
+                </div>
+              )}
             </div>
-            {editable && permissions.write && (
+            {editable && (
               <div className="review-panel-entry-actions">
-                <OLTooltip
-                  id="accept-change"
-                  overlayProps={{ placement: 'bottom' }}
-                  description={t('accept_change')}
-                  tooltipProps={{ className: 'review-panel-tooltip' }}
-                >
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={acceptHandler}
-                    tabIndex={0}
-                  >
-                    <MaterialIcon
-                      type="check"
-                      className="review-panel-entry-actions-icon"
-                      accessibilityLabel={t('accept_change')}
-                    />
-                  </button>
-                </OLTooltip>
+                {permissions.write && (
+                  <PreventSelectingEntry>
+                    <OLTooltip
+                      id="accept-change"
+                      overlayProps={{ placement: 'bottom' }}
+                      description={t('accept_change')}
+                      tooltipProps={{ className: 'review-panel-tooltip' }}
+                    >
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={acceptHandler}
+                        tabIndex={0}
+                      >
+                        <MaterialIcon
+                          type="check"
+                          className="review-panel-entry-actions-icon"
+                          accessibilityLabel={t('accept_change')}
+                        />
+                      </button>
+                    </OLTooltip>
+                  </PreventSelectingEntry>
+                )}
 
-                <OLTooltip
-                  id="reject-change"
-                  description={t('reject_change')}
-                  overlayProps={{ placement: 'bottom' }}
-                  tooltipProps={{ className: 'review-panel-tooltip' }}
-                >
-                  <button
-                    tabIndex={0}
-                    type="button"
-                    className="btn"
-                    onClick={() =>
-                      aggregate
-                        ? rejectChanges(change.id, aggregate.id)
-                        : rejectChanges(change.id)
-                    }
-                  >
-                    <MaterialIcon
-                      className="review-panel-entry-actions-icon"
-                      accessibilityLabel={t('reject_change')}
-                      type="close"
-                    />
-                  </button>
-                </OLTooltip>
+                {(permissions.write ||
+                  (permissions.trackedWrite && isChangeAuthor)) && (
+                  <PreventSelectingEntry>
+                    <OLTooltip
+                      id="reject-change"
+                      description={t('reject_change')}
+                      overlayProps={{ placement: 'bottom' }}
+                      tooltipProps={{ className: 'review-panel-tooltip' }}
+                    >
+                      <button
+                        tabIndex={0}
+                        type="button"
+                        className="btn"
+                        onClick={() =>
+                          aggregate
+                            ? rejectChanges(change.id, aggregate.id)
+                            : rejectChanges(change.id)
+                        }
+                      >
+                        <MaterialIcon
+                          className="review-panel-entry-actions-icon"
+                          accessibilityLabel={t('reject_change')}
+                          type="close"
+                        />
+                      </button>
+                    </OLTooltip>
+                  </PreventSelectingEntry>
+                )}
               </div>
             )}
           </div>

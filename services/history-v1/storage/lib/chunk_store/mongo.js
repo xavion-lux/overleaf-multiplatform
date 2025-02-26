@@ -1,4 +1,4 @@
-const { ObjectId } = require('mongodb')
+const { ObjectId, ReadPreference } = require('mongodb')
 const { Chunk } = require('overleaf-editor-core')
 const OError = require('@overleaf/o-error')
 const assert = require('../assert')
@@ -9,13 +9,22 @@ const DUPLICATE_KEY_ERROR_CODE = 11000
 
 /**
  * Get the latest chunk's metadata from the database
+ * @param {string} projectId
+ * @param {Object} [opts]
+ * @param {boolean} [opts.readOnly]
  */
-async function getLatestChunk(projectId) {
+async function getLatestChunk(projectId, opts = {}) {
   assert.mongoId(projectId, 'bad projectId')
+  const { readOnly = false } = opts
 
   const record = await mongodb.chunks.findOne(
     { projectId: new ObjectId(projectId), state: 'active' },
-    { sort: { startVersion: -1 } }
+    {
+      sort: { startVersion: -1 },
+      readPreference: readOnly
+        ? ReadPreference.secondaryPreferred
+        : ReadPreference.primary,
+    }
   )
   if (record == null) {
     return null
@@ -91,6 +100,21 @@ async function getProjectChunkIds(projectId) {
 }
 
 /**
+ * Get all of a projects chunks directly
+ */
+async function getProjectChunks(projectId) {
+  assert.mongoId(projectId, 'bad projectId')
+
+  const cursor = mongodb.chunks
+    .find(
+      { projectId: new ObjectId(projectId), state: 'active' },
+      { projection: { state: 0 } }
+    )
+    .sort({ startVersion: 1 })
+  return await cursor.map(chunkFromRecord).toArray()
+}
+
+/**
  * Insert a pending chunk before sending it to object storage.
  */
 async function insertPendingChunk(projectId, chunk) {
@@ -142,6 +166,34 @@ async function confirmCreate(projectId, chunk, chunkId, mongoOpts = {}) {
   if (result.matchedCount === 0) {
     throw new OError('pending chunk not found', { projectId, chunkId })
   }
+  await updateProjectRecord(projectId, chunk, mongoOpts)
+}
+
+/**
+ * Write the metadata to the project record
+ */
+async function updateProjectRecord(projectId, chunk, mongoOpts = {}) {
+  // record the end version against the project
+  await mongodb.projects.updateOne(
+    {
+      'overleaf.history.id': projectId, // string for Object ids, number for postgres ids
+    },
+    {
+      // always store the latest end version and timestamp for the chunk
+      $max: {
+        'overleaf.history.currentEndVersion': chunk.getEndVersion(),
+        'overleaf.history.currentEndTimestamp': chunk.getEndTimestamp(),
+        'overleaf.history.updatedAt': new Date(),
+      },
+      // store the first pending change timestamp for the chunk, this will
+      // be cleared every time a backup is completed.
+      $min: {
+        'overleaf.backup.pendingChangeAt':
+          chunk.getEndTimestamp() || new Date(),
+      },
+    },
+    mongoOpts
+  )
 }
 
 /**
@@ -252,6 +304,7 @@ function chunkFromRecord(record) {
     id: record._id.toString(),
     startVersion: record.startVersion,
     endVersion: record.endVersion,
+    endTimestamp: record.endTimestamp,
   }
 }
 
@@ -260,9 +313,11 @@ module.exports = {
   getChunkForVersion,
   getChunkForTimestamp,
   getProjectChunkIds,
+  getProjectChunks,
   insertPendingChunk,
   confirmCreate,
   confirmUpdate,
+  updateProjectRecord,
   deleteChunk,
   deleteProjectChunks,
   getOldChunksBatch,

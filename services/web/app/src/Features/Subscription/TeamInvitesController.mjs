@@ -14,7 +14,6 @@ import EmailHandler from '../Email/EmailHandler.js'
 import { RateLimiter } from '../../infrastructure/RateLimiter.js'
 import Modules from '../../infrastructure/Modules.js'
 import UserAuditLogHandler from '../User/UserAuditLogHandler.js'
-import SplitTestHandler from '../SplitTests/SplitTestHandler.js'
 
 const rateLimiters = {
   resendGroupInvite: new RateLimiter('resend-group-invite', {
@@ -70,15 +69,13 @@ async function viewInvite(req, res, next) {
   const { invite, subscription } =
     await TeamInvitesHandler.promises.getInvite(token)
 
-  await SplitTestHandler.promises.getAssignment(
-    req,
-    res,
-    'bootstrap-5-subscription'
-  )
-
   if (!invite) {
     return ErrorController.notFound(req, res)
   }
+
+  const groupSSOActive = (
+    await Modules.promises.hooks.fire('hasGroupSSOEnabled', subscription)
+  )?.[0]
 
   let validationStatus = new Map()
   if (userId) {
@@ -92,11 +89,7 @@ async function viewInvite(req, res, next) {
       personalSubscription.recurlySubscription_id &&
       personalSubscription.recurlySubscription_id !== ''
 
-    const groupSSOActive = (
-      await Modules.promises.hooks.fire('hasGroupSSOEnabled', subscription)
-    )?.[0]
-
-    if (subscription?.groupPolicy) {
+    if (subscription?.managedUsersEnabled) {
       if (!subscription.populated('groupPolicy')) {
         // eslint-disable-next-line no-restricted-syntax
         await subscription.populate('groupPolicy')
@@ -178,6 +171,7 @@ async function viewInvite(req, res, next) {
       accountExists: userByEmail != null,
       emailAddress: invite.email,
       user: { id: null },
+      groupSSOActive,
     })
   }
 }
@@ -189,12 +183,6 @@ async function viewInvites(req, res, next) {
 
   const teamInvites = groupSubscriptions.map(groupSubscription =>
     groupSubscription.teamInvites.find(invite => invite.email === user.email)
-  )
-
-  await SplitTestHandler.promises.getAssignment(
-    req,
-    res,
-    'bootstrap-5-subscription'
   )
 
   return res.render('subscriptions/team/group-invites', {

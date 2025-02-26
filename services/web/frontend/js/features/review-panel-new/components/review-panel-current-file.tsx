@@ -32,6 +32,7 @@ import { reviewTooltipStateField } from '@/features/source-editor/extensions/rev
 import ReviewPanelMoreCommentsButton from './review-panel-more-comments-button'
 import useMoreCommments from '../hooks/use-more-comments'
 import { Decoration } from '@codemirror/view'
+import { debounce } from 'lodash'
 
 type AggregatedRanges = {
   changes: Change<EditOperation>[]
@@ -116,6 +117,19 @@ const ReviewPanelCurrentFile: FC = () => {
     false
   )?.addCommentRanges
 
+  const setUpdatedPositions = useMemo(
+    () =>
+      debounce(() => {
+        setPositions(new Map(positionsRef.current))
+        window.setTimeout(() => {
+          containerRef.current?.dispatchEvent(
+            new Event('review-panel:position')
+          )
+        })
+      }, 50),
+    []
+  )
+
   const positionsMeasureRequest = useCallback(() => {
     if (aggregatedRanges) {
       view.requestMeasure({
@@ -166,16 +180,11 @@ const ReviewPanelCurrentFile: FC = () => {
           }
         },
         write() {
-          setPositions(new Map(positionsRef.current))
-          window.setTimeout(() => {
-            containerRef.current?.dispatchEvent(
-              new Event('review-panel:position')
-            )
-          })
+          setUpdatedPositions()
         },
       })
     }
-  }, [view, aggregatedRanges, addCommentRanges])
+  }, [view, aggregatedRanges, addCommentRanges, setUpdatedPositions])
 
   useEffect(positionsMeasureRequest, [positionsMeasureRequest])
   useEventListener('editor:geometry-change', positionsMeasureRequest)
@@ -201,13 +210,13 @@ const ReviewPanelCurrentFile: FC = () => {
         continue
       }
 
-      const { from, to } = cursor
+      const { from, to, value } = cursor
 
       entries.push({
         id,
         from,
         to,
-        value: cursor.value,
+        threadId: value.spec.id,
         top: positions.get(id),
       })
 
@@ -232,7 +241,7 @@ const ReviewPanelCurrentFile: FC = () => {
     if (containerRef.current && docId) {
       const positioningRes = positionItems(
         containerRef.current,
-        previousFocusedItem.current.get(docId) || 0,
+        previousFocusedItem.current.get(docId),
         docId
       )
 
@@ -297,14 +306,14 @@ const ReviewPanelCurrentFile: FC = () => {
 
       <div ref={handleContainer}>
         {addCommentEntries.map(entry => {
-          const { id, from, to, value, top } = entry
+          const { id, from, to, threadId, top } = entry
           return (
             <ReviewPanelAddComment
               docId={ranges!.docId}
               key={id}
               from={from}
               to={to}
-              value={value}
+              threadId={threadId}
               top={top}
             />
           )
@@ -320,8 +329,8 @@ const ReviewPanelCurrentFile: FC = () => {
                 top={positions.get(change.id)}
                 aggregate={aggregatedRanges.aggregates.get(change.id)}
                 hovered={hoveredEntry === change.id}
-                onEnter={() => handleEntryEnter(change.id)}
-                onLeave={() => handleEntryLeave(change.id)}
+                onEnter={handleEntryEnter}
+                onLeave={handleEntryLeave}
               />
             )
         )}
@@ -335,8 +344,8 @@ const ReviewPanelCurrentFile: FC = () => {
                 comment={comment}
                 top={positions.get(comment.id)}
                 hovered={hoveredEntry === comment.id}
-                onEnter={() => handleEntryEnter(comment.id)}
-                onLeave={() => handleEntryLeave(comment.id)}
+                onEnter={handleEntryEnter}
+                onLeave={handleEntryLeave}
               />
             )
         )}

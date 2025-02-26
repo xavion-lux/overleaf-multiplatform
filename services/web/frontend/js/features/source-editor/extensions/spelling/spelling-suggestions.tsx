@@ -11,7 +11,6 @@ import { useTranslation } from 'react-i18next'
 import getMeta from '@/utils/meta'
 import classnames from 'classnames'
 import { sendMB } from '@/infrastructure/event-tracking'
-import SpellingSuggestionsFeedback from './spelling-suggestions-feedback'
 import { SpellingSuggestionsLanguage } from './spelling-suggestions-language'
 import { captureException } from '@/infrastructure/error-reporter'
 import { debugConsole } from '@/utils/debugging'
@@ -42,34 +41,28 @@ export const SpellingSuggestions: FC<SpellingSuggestionsProps> = ({
   handleLearnWord,
   handleCorrectWord,
 }) => {
-  const [suggestions, setSuggestions] = useState(() =>
-    Array.isArray(word.suggestions)
-      ? word.suggestions.slice(0, ITEMS_TO_SHOW)
-      : []
-  )
+  const [suggestions, setSuggestions] = useState<string[]>([])
 
-  const [waiting, setWaiting] = useState(!word.suggestions)
+  const [waiting, setWaiting] = useState(true)
 
   useEffect(() => {
-    if (!word.suggestions) {
-      spellChecker
-        ?.suggest(word.text)
-        .then(result => {
-          setSuggestions(result.suggestions.slice(0, ITEMS_TO_SHOW))
-          setWaiting(false)
-          sendMB('spelling-suggestion-shown', {
-            language: spellCheckLanguage,
-            count: result.suggestions.length,
-            // word: transaction.state.sliceDoc(mark.from, mark.to),
-          })
+    spellChecker
+      ?.suggest(word.text)
+      .then(result => {
+        setSuggestions(result.suggestions.slice(0, ITEMS_TO_SHOW))
+        setWaiting(false)
+        sendMB('spelling-suggestion-shown', {
+          language: spellCheckLanguage,
+          count: result.suggestions.length,
+          // word: transaction.state.sliceDoc(mark.from, mark.to),
         })
-        .catch(error => {
-          captureException(error, {
-            tags: { ol_spell_check_language: spellCheckLanguage },
-          })
-          debugConsole.error(error)
+      })
+      .catch(error => {
+        captureException(error, {
+          tags: { ol_spell_check_language: spellCheckLanguage },
         })
-    }
+        debugConsole.error(error)
+      })
   }, [word, spellChecker, spellCheckLanguage])
 
   const language = useMemo(() => {
@@ -181,15 +174,6 @@ const B3SpellingSuggestions: FC<SpellingSuggestionsInnerProps> = ({
           handleClose={handleClose}
         />
       </li>
-
-      {getMeta('ol-isSaas') && (
-        <>
-          <li className="divider" />
-          <li role="menuitem">
-            <SpellingSuggestionsFeedback />
-          </li>
-        </>
-      )}
     </ul>
   )
 }
@@ -280,12 +264,6 @@ const B5SpellingSuggestions: FC<SpellingSuggestionsInnerProps> = ({
           language={language}
           handleClose={handleClose}
         />
-        {getMeta('ol-isSaas') && (
-          <>
-            <Dropdown.Divider />
-            <SpellingSuggestionsFeedback />
-          </>
-        )}
       </Dropdown.Menu>
     </Dropdown>
   )

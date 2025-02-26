@@ -49,6 +49,29 @@ function getDoc(req, res, next) {
   )
 }
 
+function getComment(req, res, next) {
+  const docId = req.params.doc_id
+  const projectId = req.params.project_id
+  const commentId = req.params.comment_id
+
+  logger.debug({ projectId, docId, commentId }, 'getting comment via http')
+
+  DocumentManager.getCommentWithLock(
+    projectId,
+    docId,
+    commentId,
+    (error, comment) => {
+      if (error) {
+        return next(error)
+      }
+      if (comment == null) {
+        return next(new Errors.NotFoundError('comment not found'))
+      }
+      res.json(comment)
+    }
+  )
+}
+
 // return the doc from redis if present, but don't load it from mongo
 function peekDoc(req, res, next) {
   const docId = req.params.doc_id
@@ -410,7 +433,13 @@ function updateProject(req, res, next) {
 
 function resyncProjectHistory(req, res, next) {
   const projectId = req.params.project_id
-  const { projectHistoryId, docs, files, historyRangesMigration } = req.body
+  const {
+    projectHistoryId,
+    docs,
+    files,
+    historyRangesMigration,
+    resyncProjectStructureOnly,
+  } = req.body
 
   logger.debug(
     { projectId, docs, files },
@@ -420,6 +449,9 @@ function resyncProjectHistory(req, res, next) {
   const opts = {}
   if (historyRangesMigration) {
     opts.historyRangesMigration = historyRangesMigration
+  }
+  if (resyncProjectStructureOnly) {
+    opts.resyncProjectStructureOnly = resyncProjectStructureOnly
   }
 
   HistoryManager.resyncProjectHistory(
@@ -506,4 +538,5 @@ module.exports = {
   flushQueuedProjects,
   blockProject,
   unblockProject,
+  getComment,
 }

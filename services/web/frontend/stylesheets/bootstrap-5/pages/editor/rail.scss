@@ -1,0 +1,91 @@
+:root {
+  --ide-rail-background: #fff;
+  --ide-rail-color: var(--neutral-90);
+  --ide-rail-link-background: #fff;
+  --ide-rail-link-active-background: var(--neutral-10);
+  --ide-rail-link-active-indicator-background: var(--neutral-90);
+}
+
+.ide-rail-tab-button {
+  border: 0;
+  background: none;
+}
+
+.ide-rail-tab-link {
+  border-radius: var(--border-radius-base);
+  display: block;
+  margin: 0 auto;
+  height: 32px;
+  width: 32px;
+  text-align: center;
+  padding: 0;
+  color: var(--ide-rail-color);
+  background-color: var(--ide-rail-link-background);
+  position: relative;
+  overflow-y: hidden;
+
+  .ide-rail-tab-link-icon {
+    line-height: 32px;
+    font-size: 20px;
+  }
+
+  &.open-rail {
+    color: var(--ide-rail-color);
+    background-color: var(--ide-rail-link-active-background);
+
+    &::after {
+      $indicator-height: 3px;
+
+      border-radius: 12px;
+      content: '';
+      position: absolute;
+      bottom: -$indicator-height;
+      left: 4px;
+      box-sizing: border-box;
+      width: 24px;
+      height: $indicator-height * 2;
+      border: $indicator-height solid
+        var(--ide-rail-link-active-indicator-background);
+      background-color: var(--ide-rail-link-active-indicator-background);
+    }
+  }
+
+  .badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+}
+
+.ide-rail {
+  height: 100%;
+  padding: var(--spacing-02);
+  background: var(--ide-rail-background);
+  border-right: 1px solid var(--border-divider);
+}
+
+.ide-rail-content {
+  height: 100%;
+
+  .logs-pane {
+    top: 0;
+  }
+
+  .tab-pane {
+    height: 100%;
+  }
+
+  .tab-content {
+    height: 100%;
+    width: 100%;
+    position: relative;
+  }
+}
+
+.ide-rail-tabs-nav {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-02);
+  width: 40px;
+}

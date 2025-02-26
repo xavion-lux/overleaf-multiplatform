@@ -22,7 +22,6 @@ import {
 } from '../utils/tree-operations/math'
 import { documentCommands } from '../languages/latex/document-commands'
 import { debugConsole } from '@/utils/debugging'
-import { isSplitTestEnabled } from '@/utils/splitTestUtils'
 import { nodeHasError } from '../utils/tree-operations/common'
 import { documentEnvironments } from '../languages/latex/document-environments'
 
@@ -30,10 +29,6 @@ const REPOSITION_EVENT = 'editor:repositionMathTooltips'
 const HIDE_TOOLTIP_EVENT = 'editor:hideMathTooltip'
 
 export const mathPreview = (enabled: boolean): Extension => {
-  if (!isSplitTestEnabled('math-preview')) {
-    return []
-  }
-
   return mathPreviewConf.of(
     enabled ? [mathPreviewTheme, mathPreviewStateField] : []
   )
@@ -235,12 +230,12 @@ const buildTooltipContent = (
  * Styles for the preview tooltip
  */
 const mathPreviewTheme = EditorView.baseTheme({
-  '&light .ol-cm-math-tooltip-container': {
+  '&light .ol-cm-math-tooltip': {
     boxShadow: '0px 2px 4px 0px #1e253029',
     border: '1px solid #e7e9ee !important',
     backgroundColor: 'white !important',
   },
-  '&dark .ol-cm-math-tooltip-container': {
+  '&dark .ol-cm-math-tooltip': {
     boxShadow: '0px 2px 4px 0px #1e253029',
     border: '1px solid #2f3a4c !important',
     backgroundColor: '#1b222c !important',

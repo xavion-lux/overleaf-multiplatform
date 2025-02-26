@@ -9,20 +9,6 @@ import {
 } from '../fixtures/compile'
 import useFetchMock from '../hooks/use-fetch-mock'
 import { useMeta } from '../hooks/use-meta'
-import { SplitTestProvider } from '@/shared/context/split-test-context'
-import { UserProvider } from '@/shared/context/user-context'
-import { ProjectProvider } from '@/shared/context/project-context'
-import { FileTreeDataProvider } from '@/shared/context/file-tree-data-context'
-import { EditorProvider } from '@/shared/context/editor-context'
-import { DetachProvider } from '@/shared/context/detach-context'
-import { LayoutProvider } from '@/shared/context/layout-context'
-import { LocalCompileProvider } from '@/shared/context/local-compile-context'
-import { DetachCompileProvider } from '@/shared/context/detach-compile-context'
-import { ProjectSettingsProvider } from '@/features/editor-left-menu/context/project-settings-context'
-import { FileTreePathProvider } from '@/features/file-tree/contexts/file-tree-path'
-import { UserSettingsProvider } from '@/shared/context/user-settings-context'
-import { OutlineProvider } from '@/features/ide-react/context/outline-context'
-import { ChatProvider } from '@/features/chat/context/chat-context'
 import SocketIOShim, { SocketIOMock } from '@/ide/connection/SocketIoShim'
 import { IdeContext } from '@/shared/context/ide-context'
 import {
@@ -31,18 +17,10 @@ import {
 } from '@/features/ide-react/context/ide-react-context'
 import { IdeEventEmitter } from '@/features/ide-react/create-ide-event-emitter'
 import { ReactScopeEventEmitter } from '@/features/ide-react/scope-event-emitter/react-scope-event-emitter'
-import { ModalsContextProvider } from '@/features/ide-react/context/modals-context'
 import { ConnectionContext } from '@/features/ide-react/context/connection-context'
-import { EventLog } from '@/features/ide-react/editor/event-log'
-import { ReferencesProvider } from '@/features/ide-react/context/references-context'
-import { PermissionsProvider } from '@/features/ide-react/context/permissions-context'
 import { Socket } from '@/features/ide-react/connection/types/socket'
 import { ConnectionState } from '@/features/ide-react/connection/types/connection-state'
-import { EditorManagerProvider } from '@/features/ide-react/context/editor-manager-context'
-import { FileTreeOpenProvider } from '@/features/ide-react/context/file-tree-open-context'
-import { MetadataProvider } from '@/features/ide-react/context/metadata-context'
-import { OnlineUsersProvider } from '@/features/ide-react/context/online-users-context'
-import { SnapshotProvider } from '@/features/ide-react/context/snapshot-context'
+import { ReactContextRoot } from '@/features/ide-react/context/react-context-root'
 
 const scopeWatchers: [string, (value: any) => void][] = []
 
@@ -123,12 +101,6 @@ const initialize = () => {
     socket: new SocketIOShim.SocketShimNoop(
       new SocketIOMock()
     ) as unknown as Socket,
-    editorManager: {
-      getCurrentDocId: () => 'foo',
-      openDoc: (id: string, options: unknown) => {
-        console.log('open doc', id, options)
-      },
-    },
   }
 
   // window.metaAttributesCache is reset in preview.tsx
@@ -173,91 +145,22 @@ export const ScopeDecorator = (
   // set values on window.metaAttributesCache (created in initialize, above)
   useMeta(meta)
 
-  const Providers = {
-    ChatProvider,
-    ConnectionProvider,
-    DetachCompileProvider,
-    DetachProvider,
-    EditorProvider,
-    EditorManagerProvider,
-    SnapshotProvider,
-    FileTreeDataProvider,
-    FileTreeOpenProvider,
-    FileTreePathProvider,
-    IdeReactProvider,
-    LayoutProvider,
-    LocalCompileProvider,
-    MetadataProvider,
-    ModalsContextProvider,
-    OnlineUsersProvider,
-    OutlineProvider,
-    PermissionsProvider,
-    ProjectProvider,
-    ProjectSettingsProvider,
-    ReferencesProvider,
-    SplitTestProvider,
-    UserProvider,
-    UserSettingsProvider,
-    ...opts.providers,
-  }
-
   return (
-    <Providers.SplitTestProvider>
-      <Providers.ModalsContextProvider>
-        <Providers.ConnectionProvider>
-          <Providers.IdeReactProvider>
-            <Providers.UserProvider>
-              <Providers.UserSettingsProvider>
-                <Providers.ProjectProvider>
-                  <Providers.SnapshotProvider>
-                    <Providers.FileTreeDataProvider>
-                      <Providers.FileTreePathProvider>
-                        <Providers.ReferencesProvider>
-                          <Providers.DetachProvider>
-                            <Providers.EditorProvider>
-                              <Providers.PermissionsProvider>
-                                <Providers.ProjectSettingsProvider>
-                                  <Providers.LayoutProvider>
-                                    <Providers.EditorManagerProvider>
-                                      <Providers.LocalCompileProvider>
-                                        <Providers.DetachCompileProvider>
-                                          <Providers.ChatProvider>
-                                            <Providers.FileTreeOpenProvider>
-                                              <Providers.OnlineUsersProvider>
-                                                <Providers.MetadataProvider>
-                                                  <Providers.OutlineProvider>
-                                                    <Story />
-                                                  </Providers.OutlineProvider>
-                                                </Providers.MetadataProvider>
-                                              </Providers.OnlineUsersProvider>
-                                            </Providers.FileTreeOpenProvider>
-                                          </Providers.ChatProvider>
-                                        </Providers.DetachCompileProvider>
-                                      </Providers.LocalCompileProvider>
-                                    </Providers.EditorManagerProvider>
-                                  </Providers.LayoutProvider>
-                                </Providers.ProjectSettingsProvider>
-                              </Providers.PermissionsProvider>
-                            </Providers.EditorProvider>
-                          </Providers.DetachProvider>
-                        </Providers.ReferencesProvider>
-                      </Providers.FileTreePathProvider>
-                    </Providers.FileTreeDataProvider>
-                  </Providers.SnapshotProvider>
-                </Providers.ProjectProvider>
-              </Providers.UserSettingsProvider>
-            </Providers.UserProvider>
-          </Providers.IdeReactProvider>
-        </Providers.ConnectionProvider>
-      </Providers.ModalsContextProvider>
-    </Providers.SplitTestProvider>
+    <ReactContextRoot
+      providers={{
+        ConnectionProvider,
+        IdeReactProvider,
+        ...opts.providers,
+      }}
+    >
+      <Story />
+    </ReactContextRoot>
   )
 }
 
 const ConnectionProvider: FC = ({ children }) => {
-  const [value] = useState(() => ({
-    socket: window._ide.socket as Socket,
-    connectionState: {
+  const [value] = useState(() => {
+    const connectionState: ConnectionState = {
       readyState: WebSocket.OPEN,
       forceDisconnected: false,
       inactiveDisconnect: false,
@@ -265,14 +168,30 @@ const ConnectionProvider: FC = ({ children }) => {
       forcedDisconnectDelay: 0,
       lastConnectionAttempt: 0,
       error: '',
-    } as ConnectionState,
-    isConnected: true,
-    isStillReconnecting: false,
-    secondsUntilReconnect: () => 0,
-    tryReconnectNow: () => {},
-    registerUserActivity: () => {},
-    disconnect: () => {},
-  }))
+    }
+    return {
+      socket: window._ide.socket as Socket,
+      connectionState,
+      isConnected: true,
+      isStillReconnecting: false,
+      secondsUntilReconnect: () => 0,
+      tryReconnectNow: () => {},
+      registerUserActivity: () => {},
+      closeConnection: () => {},
+      getSocketDebuggingInfo: () => ({
+        client_id: 'fakeClientId',
+        transport: 'fakeTransport',
+        publicId: 'fakePublicId',
+        lastUserActivity: 0,
+        connectionState,
+        externalHeartbeat: {
+          currentStart: 0,
+          lastSuccess: 0,
+          lastLatency: 0,
+        },
+      }),
+    }
+  })
 
   return (
     <ConnectionContext.Provider value={value}>
@@ -288,7 +207,6 @@ const IdeReactProvider: FC = ({ children }) => {
   const [ideReactContextValue] = useState(() => ({
     projectId,
     eventEmitter: new IdeEventEmitter(),
-    eventLog: new EventLog(),
     startedFreeTrial,
     setStartedFreeTrial,
     reportError: () => {},

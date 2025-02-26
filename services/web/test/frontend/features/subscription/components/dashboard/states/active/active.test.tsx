@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import * as eventTracking from '../../../../../../../../frontend/js/infrastructure/event-tracking'
+import * as eventTracking from '@/infrastructure/event-tracking'
 import { RecurlySubscription } from '../../../../../../../../types/subscription/dashboard/subscription'
 import {
   annualActiveSubscription,
@@ -11,7 +11,7 @@ import {
   trialCollaboratorSubscription,
   trialSubscription,
 } from '../../../../fixtures/subscriptions'
-import sinon from 'sinon'
+import sinon, { type SinonStub } from 'sinon'
 import { cleanUpContext } from '../../../../helpers/render-with-subscription-dash-context'
 import { renderActiveSubscription } from '../../../../helpers/render-active-subscription'
 import { cloneDeep } from 'lodash'
@@ -20,11 +20,22 @@ import {
   cancelSubscriptionUrl,
   extendTrialUrl,
   subscriptionUpdateUrl,
-} from '../../../../../../../../frontend/js/features/subscription/data/subscription-url'
+} from '@/features/subscription/data/subscription-url'
 import * as useLocationModule from '../../../../../../../../frontend/js/shared/hooks/use-location'
+import { MetaTag } from '@/utils/meta'
+import * as bootstrapUtils from '@/features/utils/bootstrap-5'
 
 describe('<ActiveSubscription />', function () {
   let sendMBSpy: sinon.SinonSpy
+  let isBootstrap5Stub: SinonStub
+
+  before(function () {
+    isBootstrap5Stub = sinon.stub(bootstrapUtils, 'isBootstrap5').returns(true)
+  })
+
+  after(function () {
+    isBootstrap5Stub.restore()
+  })
 
   beforeEach(function () {
     sendMBSpy = sinon.spy(eventTracking, 'sendMB')
@@ -198,6 +209,8 @@ describe('<ActiveSubscription />', function () {
         assign: assignStub,
         replace: sinon.stub(),
         reload: reloadStub,
+        setHash: sinon.stub(),
+        toString: sinon.stub(),
       })
     })
 
@@ -298,7 +311,7 @@ describe('<ActiveSubscription />', function () {
       })
     })
 
-    it('disables cancels subscription button after clicking and updates text', async function () {
+    it('disables cancels subscription button after clicking and shows loading spinner', async function () {
       renderActiveSubscription(annualActiveSubscription)
       showConfirmCancelUI()
       screen.getByRole('button', {
@@ -309,18 +322,19 @@ describe('<ActiveSubscription />', function () {
       })
       fireEvent.click(button)
 
-      const cancelButtton = screen.getByRole('button', {
-        name: 'Processing…',
+      const cancelButton = screen.getByRole('button', {
+        name: 'Loading',
       }) as HTMLButtonElement
-      expect(cancelButtton.disabled).to.be.true
+      expect(cancelButton.disabled).to.be.true
 
-      expect(screen.queryByText('Cancel my subscription')).to.be.null
+      const hiddenText = screen.getByText('Cancel my subscription')
+      expect(hiddenText.getAttribute('aria-hidden')).to.equal('true')
     })
 
     describe('extend trial', function () {
-      const canExtend = {
+      const canExtend: MetaTag = {
         name: 'ol-userCanExtendTrial',
-        value: 'true',
+        value: true,
       }
       const cancelButtonText = 'No thanks, I still want to cancel'
       const extendTrialButtonText = 'I’ll take it!'
@@ -354,7 +368,7 @@ describe('<ActiveSubscription />', function () {
           name: cancelButtonText,
         })
         screen.getByRole('button', {
-          name: 'Processing…',
+          name: 'Loading',
         })
       })
 
@@ -371,7 +385,7 @@ describe('<ActiveSubscription />', function () {
         expect(buttons[0].getAttribute('disabled')).to.equal('')
         expect(buttons[1].getAttribute('disabled')).to.equal('')
         screen.getByRole('button', {
-          name: 'Processing…',
+          name: 'Loading',
         })
         screen.getByRole('button', {
           name: extendTrialButtonText,
@@ -442,7 +456,7 @@ describe('<ActiveSubscription />', function () {
           name: cancelButtonText,
         })
         screen.getByRole('button', {
-          name: 'Processing…',
+          name: 'Loading',
         })
       })
 
@@ -459,7 +473,7 @@ describe('<ActiveSubscription />', function () {
         expect(buttons[0].getAttribute('disabled')).to.equal('')
         expect(buttons[1].getAttribute('disabled')).to.equal('')
         screen.getByRole('button', {
-          name: 'Processing…',
+          name: 'Loading',
         })
         screen.getByRole('button', {
           name: downgradeButtonText,

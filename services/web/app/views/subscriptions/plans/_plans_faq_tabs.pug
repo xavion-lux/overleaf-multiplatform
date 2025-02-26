@@ -8,7 +8,7 @@ mixin managingYourSubscription()
 			.collapse(id="managingYourSubscriptionQ1")
 				.custom-accordion-body
 					span Yes, you can do this at any time by going to 
-					strong Account>Subscription 
+					strong Account > Subscription 
 					span when logged in to Overleaf. You can change plans, switch between monthly and annual billing options, or cancel to downgrade to the free plan. When canceling, your subscription will continue until the end of the billing period.
 		.custom-accordion-item
 			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#managingYourSubscriptionQ2" aria-expanded="false" aria-controls="managingYourSubscriptionQ2")
@@ -26,7 +26,24 @@ mixin managingYourSubscription()
 			.collapse(id="managingYourSubscriptionQ3")
 				.custom-accordion-body
 					| This is possible when you’re purchasing a group subscription for five or more people, or a site license. For individual subscriptions, we can only accept payment online via credit card, debit card, or PayPal.
-
+		.custom-accordion-item
+			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#managingYourSubscriptionQ4" aria-expanded="false" aria-controls="managingYourSubscriptionQ4")
+				| How do I view/update the credit card being charged for my subscription?
+				span.custom-accordion-icon
+					i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
+			.collapse(id="managingYourSubscriptionQ4")
+				.custom-accordion-body
+					| You can view and update the card on file by going to Account > 
+					a.inline-green-link(
+						target="_blank"
+						href="/user/subscription"
+						event-tracking="plans-page-click"
+						event-tracking-mb="true"
+						event-tracking-trigger="click"
+						event-segmentation={ button: 'contact', location: 'faq' }
+					)
+						span Subscription
+					| .
 
 
 
@@ -41,8 +58,17 @@ mixin overleafIndividualPlans()
 			.collapse(id="overleafIndividualPlansQ1")
 				.custom-accordion-body
 					span You get full access to your chosen plan during your 7-day free trial, and there’s no obligation to continue beyond the trial. Your card will be charged at the end of your trial unless you cancel before then. To cancel, go to 
-					strong Account>Subscription 
-					span when logged in to Overleaf (the trial will continue for the full 7 days).
+					strong Account > 
+						a.inline-green-link(
+							target="_blank"
+							href="/user/subscription"
+							event-tracking="plans-page-click"
+							event-tracking-mb="true"
+							event-tracking-trigger="click"
+							event-segmentation={ button: 'contact', location: 'faq' }
+						)
+							span Subscription
+					span  when logged in to Overleaf (the trial will continue for the full 7 days).
 
 		.custom-accordion-item
 			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafIndividualPlansQ2" aria-expanded="false" aria-controls="overleafIndividualPlansQ2")
@@ -115,28 +141,22 @@ mixin overleafGroupPlans()
 					div.mt-2 Collaborators are people that your group users may invite to work with them on their projects. So, for example, if you have the Group Standard plan, the users in your group can invite up to 10 people to work with them on a project. And if you have the Group Professional plan, your users can invite as many people to work with them as they want.
 		.custom-accordion-item
 			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ2" aria-expanded="false" aria-controls="overleafGroupPlansQ2")
-				if showGroupPricing2025
-					| What is the benefit of purchasing an Overleaf Group plan?
-				else
-					| Is an Overleaf Group plan more cost effective?
+				| What is the benefit of purchasing an Overleaf Group plan?
 				span.custom-accordion-icon
 					i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
 			.collapse(id="overleafGroupPlansQ2")
 				.custom-accordion-body
-					if showGroupPricing2025
-						| Our Group subscriptions allow you to purchase access to our premium features for multiple people. They’re easy to manage, help save on paperwork, and allow groups of 5 or more to purchase via purchase order (PO). We also offer discounts on purchases of Group subscriptions for more than 50 users; just get in touch with our 
-						a.inline-green-link(
-							target="_blank"
-							href="/for/contact-sales"
-							event-tracking="plans-page-click"
-							event-tracking-mb="true"
-							event-tracking-trigger="click"
-							event-segmentation={ button: 'contact', location: 'faq' }
-						)
-							span Sales team
-						| .
-					else
-						| Our Group subscriptions allow you to purchase access to our premium features for multiple people. They’re easy to manage, help save on paperwork, and reduce the cost of purchasing multiple subscriptions separately.
+					| Our Group subscriptions allow you to purchase access to our premium features for multiple people. They’re easy to manage, help save on paperwork, and allow groups of 5 or more to purchase via purchase order (PO). We also offer discounts on purchases of Group subscriptions for more than 50 users; just get in touch with our 
+					a.inline-green-link(
+						target="_blank"
+						href="/for/contact-sales"
+						event-tracking="plans-page-click"
+						event-tracking-mb="true"
+						event-tracking-trigger="click"
+						event-segmentation={ button: 'contact', location: 'faq' }
+					)
+						span Sales team
+					| .
 		.custom-accordion-item
 			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ3" aria-expanded="false" aria-controls="overleafGroupPlansQ3")
 				| Who is eligible for the educational discount?
@@ -145,14 +165,74 @@ mixin overleafGroupPlans()
 			.collapse(id="overleafGroupPlansQ3")
 				.custom-accordion-body
 					| The educational discount for group subscriptions is for students or faculty who are using Overleaf primarily for teaching. 
-		.custom-accordion-item
-			button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ4" aria-expanded="false" aria-controls="overleafGroupPlansQ4")
-				| Can I add more users to my group subscription at a later date?
-				span.custom-accordion-icon
-					i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
-			.collapse(id="overleafGroupPlansQ4")
-				.custom-accordion-body
-					| Yes. To add more users to your subscription you’ll need to 
-					button.btn-link.inline-green-link(data-ol-open-contact-form-modal="general")
-						span #{translate("contact_us")}
-
+		if canUseFlexibleLicensing
+			.custom-accordion-item
+				button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ4" aria-expanded="false" aria-controls="overleafGroupPlansQ4")
+					| How do I add more licenses to my group subscription, and what will it cost?
+					span.custom-accordion-icon
+						i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
+				.collapse(id="overleafGroupPlansQ4")
+					.custom-accordion-body
+						div 
+							| You can add up to 50 licenses using the 
+							a.inline-green-link(
+								target="_blank"
+								href="/user/subscription"
+								event-tracking="plans-page-click"
+								event-tracking-mb="true"
+								event-tracking-trigger="click"
+								event-segmentation={ button: 'contact', location: 'faq' }
+							)
+								span subscription management page
+							|  accessed by going to Account > 
+							a.inline-green-link(
+								target="_blank"
+								href="/user/subscription"
+								event-tracking="plans-page-click"
+								event-tracking-mb="true"
+								event-tracking-trigger="click"
+								event-segmentation={ button: 'contact', location: 'faq' }
+							)
+								span Subscription
+							|  when logged into Overleaf. The cost per license will be prorated at the current per license rate, and will end with your existing renewal date.
+						div.mt-2 
+							| If you need more than 50 licenses added to your subscription, please 
+							a.inline-green-link(
+								target="_blank"
+								href="/for/contact-sales"
+								event-tracking="plans-page-click"
+								event-tracking-mb="true"
+								event-tracking-trigger="click"
+								event-segmentation={ button: 'contact', location: 'faq' }
+							)
+								span contact the Sales team
+							| .
+			.custom-accordion-item
+				button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ5" aria-expanded="false" aria-controls="overleafGroupPlansQ5")
+					| How do I upgrade my plan from Group Standard to Group Professional?
+					span.custom-accordion-icon
+						i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
+				.collapse(id="overleafGroupPlansQ5")
+					.custom-accordion-body
+						| You can upgrade your plan from Group Standard to Group Professional on the 
+						a.inline-green-link(
+							target="_blank"
+							href="/user/subscription"
+							event-tracking="plans-page-click"
+							event-tracking-mb="true"
+							event-tracking-trigger="click"
+							event-segmentation={ button: 'contact', location: 'faq' }
+						)
+							span subscription management page
+						| .	
+		else
+			.custom-accordion-item
+				button.custom-accordion-header.collapsed(type="button" data-toggle="collapse" data-target="#overleafGroupPlansQ4" aria-expanded="false" aria-controls="overleafGroupPlansQ4")
+					| Can I add more users to my group subscription at a later date?
+					span.custom-accordion-icon
+						i.material-symbols.material-symbols-outlined(aria-hidden="true") keyboard_arrow_down
+				.collapse(id="overleafGroupPlansQ4")
+					.custom-accordion-body
+						| Yes. To add more users to your subscription you’ll need to 
+						button.btn-link.inline-green-link(data-ol-open-contact-form-modal="general")
+							span #{translate("contact_us")}

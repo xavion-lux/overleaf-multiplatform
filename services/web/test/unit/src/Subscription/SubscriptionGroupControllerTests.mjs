@@ -56,6 +56,12 @@ describe('SubscriptionGroupController', function () {
           .stub()
           .resolves(this.createSubscriptionChangeData),
         ensureFlexibleLicensingEnabled: sinon.stub().resolves(),
+        ensureSubscriptionIsActive: sinon.stub().resolves(),
+        ensureSubscriptionCollectionMethodIsNotManual: sinon.stub().resolves(),
+        ensureSubscriptionHasNoPendingChanges: sinon.stub().resolves(),
+        getGroupPlanUpgradePreview: sinon
+          .stub()
+          .resolves(this.previewSubscriptionChangeData),
       },
     }
 
@@ -100,11 +106,29 @@ describe('SubscriptionGroupController', function () {
       },
     }
 
-    this.RecurlyClient = {}
+    this.paymentMethod = { cardType: 'Visa', lastFour: '1111' }
+
+    this.RecurlyClient = {
+      promises: {
+        getPaymentMethod: sinon.stub().resolves(this.paymentMethod),
+        // getSubscription: sinon.stub().resolves(this.subscription),
+      },
+    }
 
     this.SubscriptionController = {}
 
     this.SubscriptionModel = { Subscription: {} }
+
+    this.PlansHelper = {
+      isProfessionalGroupPlan: sinon.stub().returns(false),
+    }
+
+    this.Errors = {
+      MissingBillingInfoError: class extends Error {},
+      ManuallyCollectedError: class extends Error {},
+      PendingChangeError: class extends Error {},
+      InactiveError: class extends Error {},
+    }
 
     this.Controller = await esmock.strict(modulePath, {
       '../../../../app/src/Features/Subscription/SubscriptionGroupHandler':
@@ -127,6 +151,8 @@ describe('SubscriptionGroupController', function () {
         this.SubscriptionController,
       '../../../../app/src/Features/Subscription/RecurlyClient':
         this.RecurlyClient,
+      '../../../../app/src/Features/Subscription/PlansHelper': this.PlansHelper,
+      '../../../../app/src/Features/Subscription/Errors': this.Errors,
       '../../../../app/src/models/Subscription': this.SubscriptionModel,
       '@overleaf/logger': {
         err: sinon.stub(),
@@ -323,15 +349,19 @@ describe('SubscriptionGroupController', function () {
       const res = {
         render: (page, props) => {
           this.SubscriptionGroupHandler.promises.getUsersGroupSubscriptionDetails
-            .calledWith(this.req)
+            .calledWith(this.req.session.user._id)
             .should.equal(true)
           this.SubscriptionGroupHandler.promises.ensureFlexibleLicensingEnabled
             .calledWith(this.plan)
+            .should.equal(true)
+          this.SubscriptionGroupHandler.promises.ensureSubscriptionIsActive
+            .calledWith(this.subscription)
             .should.equal(true)
           page.should.equal('subscriptions/add-seats')
           props.subscriptionId.should.equal(this.subscriptionId)
           props.groupName.should.equal(this.subscription.teamName)
           props.totalLicenses.should.equal(this.subscription.membersLimit)
+          props.isProfessional.should.equal(false)
           done()
         },
       }
@@ -366,14 +396,78 @@ describe('SubscriptionGroupController', function () {
 
       this.Controller.addSeatsToGroupSubscription(this.req, res)
     })
+
+    it('should redirect to missing billing information page when billing information is missing', function (done) {
+      this.RecurlyClient.promises.getPaymentMethod = sinon
+        .stub()
+        .throws(new this.Errors.MissingBillingInfoError())
+
+      const res = {
+        redirect: url => {
+          url.should.equal(
+            '/user/subscription/group/missing-billing-information'
+          )
+          done()
+        },
+      }
+
+      this.Controller.addSeatsToGroupSubscription(this.req, res)
+    })
+
+    it('should redirect to manually collected subscription error page when collection method is manual', function (done) {
+      this.SubscriptionGroupHandler.promises.ensureSubscriptionCollectionMethodIsNotManual =
+        sinon.stub().throws(new this.Errors.ManuallyCollectedError())
+
+      const res = {
+        redirect: url => {
+          url.should.equal(
+            '/user/subscription/group/manually-collected-subscription'
+          )
+          done()
+        },
+      }
+
+      this.Controller.addSeatsToGroupSubscription(this.req, res)
+    })
+
+    it('should redirect to subscription page when there is a pending change', function (done) {
+      this.SubscriptionGroupHandler.promises.ensureSubscriptionHasNoPendingChanges =
+        sinon.stub().throws(new this.Errors.PendingChangeError())
+
+      const res = {
+        redirect: url => {
+          url.should.equal('/user/subscription')
+          done()
+        },
+      }
+
+      this.Controller.addSeatsToGroupSubscription(this.req, res)
+    })
+
+    it('should redirect to subscription page when subscription is not active', function (done) {
+      this.SubscriptionGroupHandler.promises.ensureSubscriptionIsActive = sinon
+        .stub()
+        .rejects()
+
+      const res = {
+        redirect: url => {
+          url.should.equal('/user/subscription')
+          done()
+        },
+      }
+
+      this.Controller.addSeatsToGroupSubscription(this.req, res)
+    })
   })
 
   describe('previewAddSeatsSubscriptionChange', function () {
     it('should preview "add seats" change', function (done) {
+      this.req.body = { adding: 2 }
+
       const res = {
         json: data => {
           this.SubscriptionGroupHandler.promises.previewAddSeatsSubscriptionChange
-            .calledWith(this.req)
+            .calledWith(this.req.session.user._id, this.req.body.adding)
             .should.equal(true)
           data.should.deep.equal(this.previewSubscriptionChangeData)
           done()
@@ -389,7 +483,7 @@ describe('SubscriptionGroupController', function () {
 
       const res = {
         status: statusCode => {
-          statusCode.should.equal(400)
+          statusCode.should.equal(500)
 
           return {
             end: () => {
@@ -405,10 +499,12 @@ describe('SubscriptionGroupController', function () {
 
   describe('createAddSeatsSubscriptionChange', function () {
     it('should apply "add seats" change', function (done) {
+      this.req.body = { adding: 2 }
+
       const res = {
         json: data => {
           this.SubscriptionGroupHandler.promises.createAddSeatsSubscriptionChange
-            .calledWith(this.req)
+            .calledWith(this.req.session.user._id, this.req.body.adding)
             .should.equal(true)
           data.should.deep.equal(this.createSubscriptionChangeData)
           done()
@@ -424,7 +520,7 @@ describe('SubscriptionGroupController', function () {
 
       const res = {
         status: statusCode => {
-          statusCode.should.equal(400)
+          statusCode.should.equal(500)
 
           return {
             end: () => {
@@ -494,6 +590,113 @@ describe('SubscriptionGroupController', function () {
         variant: 'default',
       })
       this.Controller.flexibleLicensingSplitTest(this.req, res, next, done)
+    })
+  })
+
+  describe('subscriptionUpgradePage', function () {
+    it('should render "subscription upgrade" page', function (done) {
+      const olSubscription = { membersLimit: 1, teamName: 'test team' }
+      this.SubscriptionModel.Subscription.findOne = () => {
+        return {
+          exec: () => olSubscription,
+        }
+      }
+
+      const res = {
+        render: (page, data) => {
+          this.SubscriptionGroupHandler.promises.getGroupPlanUpgradePreview
+            .calledWith(this.req.session.user._id)
+            .should.equal(true)
+          page.should.equal('subscriptions/upgrade-group-subscription-react')
+          data.totalLicenses.should.equal(olSubscription.membersLimit)
+          data.groupName.should.equal(olSubscription.teamName)
+          data.changePreview.should.equal(this.previewSubscriptionChangeData)
+          done()
+        },
+      }
+
+      this.Controller.subscriptionUpgradePage(this.req, res)
+    })
+
+    it('should redirect if failed to generate preview', function (done) {
+      this.SubscriptionGroupHandler.promises.getGroupPlanUpgradePreview = sinon
+        .stub()
+        .rejects()
+
+      const res = {
+        redirect: url => {
+          url.should.equal('/user/subscription')
+          done()
+        },
+      }
+
+      this.Controller.subscriptionUpgradePage(this.req, res)
+    })
+
+    it('should redirect to missing billing information page when billing information is missing', function (done) {
+      this.SubscriptionGroupHandler.promises.getGroupPlanUpgradePreview = sinon
+        .stub()
+        .throws(new this.Errors.MissingBillingInfoError())
+
+      const res = {
+        redirect: url => {
+          url.should.equal(
+            '/user/subscription/group/missing-billing-information'
+          )
+          done()
+        },
+      }
+
+      this.Controller.subscriptionUpgradePage(this.req, res)
+    })
+
+    it('should redirect to manually collected subscription error page when collection method is manual', function (done) {
+      this.SubscriptionGroupHandler.promises.getGroupPlanUpgradePreview = sinon
+        .stub()
+        .throws(new this.Errors.ManuallyCollectedError())
+
+      const res = {
+        redirect: url => {
+          url.should.equal(
+            '/user/subscription/group/manually-collected-subscription'
+          )
+          done()
+        },
+      }
+
+      this.Controller.subscriptionUpgradePage(this.req, res)
+    })
+  })
+
+  describe('upgradeSubscription', function () {
+    it('should send 200 response', function (done) {
+      this.SubscriptionGroupHandler.promises.upgradeGroupPlan = sinon
+        .stub()
+        .resolves()
+
+      const res = {
+        sendStatus: code => {
+          code.should.equal(200)
+          done()
+        },
+      }
+
+      this.Controller.upgradeSubscription(this.req, res)
+    })
+
+    it('should send 500 response', function (done) {
+      this.SubscriptionGroupHandler.promises.upgradeGroupPlan = sinon
+        .stub()
+        .rejects()
+
+      const res = {
+        sendStatus: code => {
+          code.should.equal(500)
+          done()
+        },
+      }
+
+      this.Controller.upgradeSubscription(this.req, res)
     })
   })
 })

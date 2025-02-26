@@ -28,9 +28,12 @@ const PermissionsProvider: FC = ({ children }) => (
     value={{
       read: true,
       comment: true,
+      resolveOwnComments: false,
+      resolveAllComments: false,
       trackedWrite: false,
       write: false,
       admin: false,
+      labelVersion: false,
     }}
   >
     {children}

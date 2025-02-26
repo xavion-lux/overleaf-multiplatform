@@ -7,6 +7,7 @@ import {
   Dispatch,
   SetStateAction,
   FC,
+  useState,
 } from 'react'
 import useScopeValue from '../hooks/use-scope-value'
 import useDetachLayout from '../hooks/use-detach-layout'
@@ -17,11 +18,14 @@ import { debugConsole } from '@/utils/debugging'
 import { BinaryFile } from '@/features/file-view/types/binary-file'
 import useScopeEventEmitter from '@/shared/hooks/use-scope-event-emitter'
 import useEventListener from '@/shared/hooks/use-event-listener'
+import { isSplitTestEnabled } from '@/utils/splitTestUtils'
+import { isMac } from '@/shared/utils/os'
+import { sendSearchEvent } from '@/features/event-tracking/search-events'
 
 export type IdeLayout = 'sideBySide' | 'flat'
 export type IdeView = 'editor' | 'file' | 'pdf' | 'history'
 
-type LayoutContextValue = {
+export type LayoutContextValue = {
   reattach: () => void
   detach: () => void
   detachIsLinked: boolean
@@ -49,6 +53,8 @@ type LayoutContextValue = {
   >
   pdfLayout: IdeLayout
   pdfPreviewOpen: boolean
+  projectSearchIsOpen: boolean
+  setProjectSearchIsOpen: Dispatch<SetStateAction<boolean>>
 }
 
 const debugPdfDetach = getMeta('ol-debugPdfDetach')
@@ -107,6 +113,9 @@ export const LayoutProvider: FC = ({ children }) => {
   const [leftMenuShown, setLeftMenuShown] =
     useScopeValue<boolean>('ui.leftMenuShown')
 
+  // whether the project search is open
+  const [projectSearchIsOpen, setProjectSearchIsOpen] = useState(false)
+
   useEventListener(
     'ui.toggle-left-menu',
     useCallback(
@@ -122,6 +131,26 @@ export const LayoutProvider: FC = ({ children }) => {
     useCallback(() => {
       setReviewPanelOpen(open => !open)
     }, [setReviewPanelOpen])
+  )
+
+  useEventListener(
+    'keydown',
+    useCallback((event: KeyboardEvent) => {
+      if (
+        (isMac ? event.metaKey : event.ctrlKey) &&
+        event.shiftKey &&
+        event.code === 'KeyF'
+      ) {
+        if (isSplitTestEnabled('full-project-search')) {
+          event.preventDefault()
+          sendSearchEvent('search-open', {
+            searchType: 'full-project',
+            method: 'keyboard',
+          })
+          setProjectSearchIsOpen(true)
+        }
+      }
+    }, [])
   )
 
   // whether to display the editor and preview side-by-side or full-width ("flat")
@@ -194,6 +223,8 @@ export const LayoutProvider: FC = ({ children }) => {
       leftMenuShown,
       pdfLayout,
       pdfPreviewOpen,
+      projectSearchIsOpen,
+      setProjectSearchIsOpen,
       reviewPanelOpen,
       miniReviewPanelVisible,
       loadingStyleSheet,
@@ -216,6 +247,8 @@ export const LayoutProvider: FC = ({ children }) => {
       leftMenuShown,
       pdfLayout,
       pdfPreviewOpen,
+      projectSearchIsOpen,
+      setProjectSearchIsOpen,
       reviewPanelOpen,
       miniReviewPanelVisible,
       loadingStyleSheet,

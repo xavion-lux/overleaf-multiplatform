@@ -22,6 +22,7 @@ describe('HistoryStoreManager', function () {
       },
       apis: {
         filestore: {
+          enabled: true,
           url: 'http://filestore.overleaf.production',
         },
       },
@@ -57,7 +58,6 @@ describe('HistoryStoreManager', function () {
     }
 
     this.request = sinon.stub()
-    this.request.get = sinon.stub()
 
     this.logger = {
       debug: sinon.stub(),
@@ -382,6 +382,9 @@ describe('HistoryStoreManager', function () {
       this.fileStream = {}
       this.hash = 'random-hash'
       this.LocalFileWriter.bufferOnDisk.callsArgWith(4, null, this.hash)
+      this.FetchUtils.fetchNothing.rejects(
+        new RequestFailedError('', {}, { status: 404 })
+      )
       this.FetchUtils.fetchStream.resolves(this.fileStream)
     })
 
@@ -422,6 +425,30 @@ describe('HistoryStoreManager', function () {
       })
     })
 
+    describe('with filestore disabled', function () {
+      beforeEach(function (done) {
+        this.settings.apis.filestore.enabled = false
+        this.file_id = '012345678901234567890123'
+        this.update = {
+          file: true,
+          url: `http://filestore.other.cloud.provider/project/${this.projectId}/file/${this.file_id}`,
+          hash: this.hash,
+        }
+        this.HistoryStoreManager.createBlobForUpdate(
+          this.projectId,
+          this.historyId,
+          this.update,
+          err => {
+            expect(err).to.match(/blocking filestore read/)
+            done()
+          }
+        )
+      })
+      it('should not request the file', function () {
+        expect(this.FetchUtils.fetchStream).to.not.have.been.called
+      })
+    })
+
     describe('for a file update with an invalid filestore location', function () {
       beforeEach(function (done) {
         this.invalid_id = '000000000000000000000000'
@@ -443,7 +470,7 @@ describe('HistoryStoreManager', function () {
       })
 
       it('should not request the file from the filestore', function () {
-        expect(this.request.get).to.not.have.been.called
+        expect(this.FetchUtils.fetchStream).to.not.have.been.called
       })
     })
 
@@ -503,6 +530,7 @@ describe('HistoryStoreManager', function () {
       })
       describe('when history-v1 confirms that the blob exists', function () {
         beforeEach(function (done) {
+          this.FetchUtils.fetchNothing.resolves()
           this.HistoryStoreManager.createBlobForUpdate(
             this.projectId,
             this.historyId,

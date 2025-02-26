@@ -1,9 +1,8 @@
 import { expect } from 'chai'
 import _ from 'lodash'
-import fs from 'fs'
 import timekeeper from 'timekeeper'
 import Settings from '@overleaf/settings'
-import UserHelper from './helpers/User.js'
+import UserHelper from './helpers/User.mjs'
 import express from 'express'
 import { plainTextResponse } from '../../../app/src/infrastructure/Response.js'
 
@@ -48,7 +47,6 @@ describe('LinkedFiles', function () {
   beforeEach(async function () {
     owner = new User()
     await owner.login()
-    await fs.promises.mkdir(Settings.path.dumpFolder, { recursive: true })
   })
 
   describe('creating a project linked file', function () {

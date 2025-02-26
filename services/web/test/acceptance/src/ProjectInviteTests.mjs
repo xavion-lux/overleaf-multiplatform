@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import Async from 'async'
-import User from './helpers/User.js'
+import User from './helpers/User.mjs'
 import settings from '@overleaf/settings'
 import CollaboratorsEmailHandler from '../../../app/src/Features/Collaborators/CollaboratorsEmailHandler.mjs'
 import CollaboratorsInviteHelper from '../../../app/src/Features/Collaborators/CollaboratorsInviteHelper.js'
@@ -327,20 +327,13 @@ describe('ProjectInviteTests', function () {
 
     Async.series(
       [
+        cb => this.sendingUser.ensureUserExists(cb),
+        cb => this.sendingUser.upgradeFeatures({ collaborators: 10 }, cb),
         cb => this.sendingUser.login(cb),
-        cb => this.sendingUser.setFeatures({ collaborators: 10 }, cb),
         cb =>
           this.sendingUser.mongoUpdate(
             {
               $set: { first_name: OWNER_NAME },
-            },
-            cb
-          ),
-        cb =>
-          this.sendingUser.setFeaturesOverride(
-            {
-              note: 'ProjectInviteTests acceptance tests',
-              features: { collaborators: 10 },
             },
             cb
           ),
@@ -366,6 +359,60 @@ describe('ProjectInviteTests', function () {
             done()
           }
         )
+      })
+
+      it('should fail if email is not a string', function (done) {
+        this.sendingUser.getCsrfToken(err => {
+          if (err) {
+            return done(err)
+          }
+          this.sendingUser.request.post(
+            {
+              uri: `/project/${this.projectId}/invite`,
+              json: {
+                email: {},
+                privileges: 'readAndWrite',
+              },
+            },
+            (err, response, body) => {
+              if (err) {
+                return done(err)
+              }
+              expect(response.statusCode).to.equal(400)
+              expect(response.body.validation.body.message).to.equal(
+                '"email" must be a string'
+              )
+              done()
+            }
+          )
+        })
+      })
+
+      it('should fail on invalid privileges', function (done) {
+        this.sendingUser.getCsrfToken(err => {
+          if (err) {
+            return done(err)
+          }
+          this.sendingUser.request.post(
+            {
+              uri: `/project/${this.projectId}/invite`,
+              json: {
+                email: this.email,
+                privileges: 'invalid-privilege',
+              },
+            },
+            (err, response, body) => {
+              if (err) {
+                return done(err)
+              }
+              expect(response.statusCode).to.equal(400)
+              expect(response.body.validation.body.message).to.equal(
+                '"privileges" must be one of [readOnly, readAndWrite, review]'
+              )
+              done()
+            }
+          )
+        })
       })
 
       it('should allow the project owner to create and remove invites', function (done) {

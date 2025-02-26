@@ -5,11 +5,7 @@ import useScopeEventEmitter from '../../../shared/hooks/use-scope-event-emitter'
 import useEventListener from '../../../shared/hooks/use-event-listener'
 import useScopeEventListener from '../../../shared/hooks/use-scope-event-listener'
 import { createExtensions } from '../extensions'
-import {
-  lineHeights,
-  setEditorTheme,
-  setOptionsTheme,
-} from '../extensions/theme'
+import { setEditorTheme, setOptionsTheme } from '../extensions/theme'
 import {
   restoreCursorPosition,
   setCursorLineAndScroll,
@@ -33,12 +29,7 @@ import { setAutoPair } from '../extensions/auto-pair'
 import { setAutoComplete } from '../extensions/auto-complete'
 import { usePhrases } from './use-phrases'
 import { setPhrases } from '../extensions/phrases'
-import {
-  addLearnedWord,
-  removeLearnedWord,
-  resetLearnedWords,
-  setSpellCheckLanguage,
-} from '../extensions/spelling'
+import { setSpellCheckLanguage } from '../extensions/spelling'
 import {
   createChangeManager,
   dispatchEditorEvent,
@@ -52,10 +43,9 @@ import { setVisual } from '../extensions/visual/visual'
 import { useFileTreePathContext } from '@/features/file-tree/contexts/file-tree-path'
 import { useUserSettingsContext } from '@/shared/context/user-settings-context'
 import { setDocName } from '@/features/source-editor/extensions/doc-name'
-import isValidTexFile from '@/main/is-valid-tex-file'
+import { isValidTeXFile } from '@/main/is-valid-tex-file'
 import { captureException } from '@/infrastructure/error-reporter'
 import grammarlyExtensionPresent from '@/shared/utils/grammarly'
-import { DocumentContainer } from '@/features/ide-react/editor/document-container'
 import { useLayoutContext } from '@/shared/context/layout-context'
 import { debugConsole } from '@/utils/debugging'
 import { useMetadataContext } from '@/features/ide-react/context/metadata-context'
@@ -68,6 +58,8 @@ import { useThreadsContext } from '@/features/review-panel-new/context/threads-c
 import { useHunspell } from '@/features/source-editor/hooks/use-hunspell'
 import { isBootstrap5 } from '@/features/utils/bootstrap-5'
 import { Permissions } from '@/features/ide-react/types/permissions'
+import { lineHeights } from '@/shared/utils/styles'
+import { useEditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
 
 function useCodeMirrorScope(view: EditorView) {
   const { fileTreeData } = useFileTreeData()
@@ -80,16 +72,11 @@ function useCodeMirrorScope(view: EditorView) {
     useCompileContext()
 
   const { reviewPanelOpen, miniReviewPanelVisible } = useLayoutContext()
-
+  const { currentDocument, openDocName, trackChanges } =
+    useEditorManagerContext()
   const metadata = useMetadataContext()
 
   const [loadingThreads] = useScopeValue<boolean>('loadingThreads')
-
-  const [currentDoc] = useScopeValue<DocumentContainer | null>(
-    'editor.sharejs_doc'
-  )
-  const [docName] = useScopeValue<string>('editor.open_doc_name')
-  const [trackChanges] = useScopeValue<boolean>('editor.trackChanges')
 
   const { id: userId } = useUserContext()
   const { userSettings } = useUserSettingsContext()
@@ -104,6 +91,7 @@ function useCodeMirrorScope(view: EditorView) {
     mode,
     syntaxValidation,
     mathPreview,
+    referencesSearchMode,
   } = userSettings
 
   const [cursorHighlights] = useScopeValue<Record<string, Highlight[]>>(
@@ -177,19 +165,20 @@ function useCodeMirrorScope(view: EditorView) {
     mode,
     syntaxValidation,
     mathPreview,
+    referencesSearchMode,
   })
 
   const currentDocRef = useRef({
-    currentDoc,
+    currentDocument,
     trackChanges,
     loadingThreads,
   })
 
   useEffect(() => {
-    if (currentDoc) {
-      currentDocRef.current.currentDoc = currentDoc
+    if (currentDocument) {
+      currentDocRef.current.currentDocument = currentDocument
     }
-  }, [view, currentDoc])
+  }, [view, currentDocument])
 
   useEffect(() => {
     if (ranges && threads) {
@@ -199,7 +188,7 @@ function useCodeMirrorScope(view: EditorView) {
     }
   }, [view, ranges, threads])
 
-  const docNameRef = useRef(docName)
+  const docNameRef = useRef(openDocName)
 
   useEffect(() => {
     currentDocRef.current.loadingThreads = loadingThreads
@@ -208,14 +197,14 @@ function useCodeMirrorScope(view: EditorView) {
   useEffect(() => {
     currentDocRef.current.trackChanges = trackChanges
 
-    if (currentDoc) {
+    if (currentDocument) {
       if (trackChanges) {
-        currentDoc.track_changes_as = userId || 'anonymous'
+        currentDocument.track_changes_as = userId || 'anonymous'
       } else {
-        currentDoc.track_changes_as = null
+        currentDocument.track_changes_as = null
       }
     }
-  }, [userId, currentDoc, trackChanges])
+  }, [userId, currentDocument, trackChanges])
 
   useEffect(() => {
     if (lineHeight && fontSize) {
@@ -293,7 +282,7 @@ function useCodeMirrorScope(view: EditorView) {
 
   const { previewByPath } = useFileTreePathContext()
 
-  const showVisual = visual && isValidTexFile(docName)
+  const showVisual = visual && !!openDocName && isValidTeXFile(openDocName)
 
   const visualRef = useRef({
     previewByPath,
@@ -318,18 +307,18 @@ function useCodeMirrorScope(view: EditorView) {
     })
   }, [])
 
-  // create a new state when currentDoc changes
+  // create a new state when currentDocument changes
 
   useEffect(() => {
-    if (currentDoc) {
+    if (currentDocument) {
       debugConsole.log('creating new editor state')
 
       const state = EditorState.create({
-        doc: currentDoc.getSnapshot(),
+        doc: currentDocument.getSnapshot(),
         extensions: createExtensions({
           currentDoc: {
             ...currentDocRef.current,
-            currentDoc,
+            currentDoc: currentDocument,
           },
           docName: docNameRef.current,
           theme: themeRef.current,
@@ -339,7 +328,7 @@ function useCodeMirrorScope(view: EditorView) {
           spelling: spellingRef.current,
           visual: visualRef.current,
           projectFeatures: projectFeaturesRef.current,
-          changeManager: createChangeManager(view, currentDoc),
+          changeManager: createChangeManager(view, currentDocument),
           handleError,
           handleException,
         }),
@@ -348,7 +337,7 @@ function useCodeMirrorScope(view: EditorView) {
 
       // synchronous config
       view.dispatch(
-        restoreCursorPosition(state.doc, currentDoc.doc_id),
+        restoreCursorPosition(state.doc, currentDocument.doc_id),
         setEditable(editableRef.current),
         setOptionsTheme(themeRef.current)
       )
@@ -369,26 +358,26 @@ function useCodeMirrorScope(view: EditorView) {
         })
       }
     }
-    // IMPORTANT: This effect must not depend on anything variable apart from currentDoc,
+    // IMPORTANT: This effect must not depend on anything variable apart from currentDocument,
     // as the editor state is recreated when the effect runs.
-  }, [view, currentDoc, handleError, handleException])
+  }, [view, currentDocument, handleError, handleException])
 
   useEffect(() => {
-    if (docName) {
-      docNameRef.current = docName
+    if (openDocName) {
+      docNameRef.current = openDocName
 
       window.setTimeout(() => {
         view.dispatch(
-          setDocName(docNameRef.current),
+          setDocName(openDocName),
           setLanguage(
-            docNameRef.current,
+            openDocName,
             metadataRef.current,
             settingsRef.current.syntaxValidation
           )
         )
       })
     }
-  }, [view, docName])
+  }, [view, openDocName])
 
   useEffect(() => {
     visualRef.current.visual = showVisual
@@ -438,6 +427,7 @@ function useCodeMirrorScope(view: EditorView) {
         setAutoComplete({
           enabled: autoComplete,
           projectFeatures: projectFeaturesRef.current,
+          referencesSearchMode: settingsRef.current.referencesSearchMode,
         })
       )
     })
@@ -466,30 +456,41 @@ function useCodeMirrorScope(view: EditorView) {
     })
   }, [view, mathPreview])
 
+  useEffect(() => {
+    settingsRef.current.referencesSearchMode = referencesSearchMode
+  }, [referencesSearchMode])
+
   const emitSyncToPdf = useScopeEventEmitter('cursor:editor:syncToPdf')
 
-  const handleGoToLine = useCallback(
-    (event, lineNumber, columnNumber, syncToPdf) => {
-      setCursorLineAndScroll(view, lineNumber, columnNumber)
-      if (syncToPdf) {
-        emitSyncToPdf()
-      }
-    },
-    [emitSyncToPdf, view]
-  )
-
   // select and scroll to position on editor:gotoLine event (from synctex)
-  useScopeEventListener('editor:gotoLine', handleGoToLine)
-
-  const handleGoToOffset = useCallback(
-    (event, offset) => {
-      setCursorPositionAndScroll(view, offset)
-    },
-    [view]
+  useScopeEventListener(
+    'editor:gotoLine',
+    useCallback(
+      (_event, options) => {
+        setCursorLineAndScroll(
+          view,
+          options.gotoLine,
+          options.gotoColumn,
+          options.selectText
+        )
+        if (options.syncToPdf) {
+          emitSyncToPdf()
+        }
+      },
+      [emitSyncToPdf, view]
+    )
   )
 
   // select and scroll to position on editor:gotoOffset event (from review panel)
-  useScopeEventListener('editor:gotoOffset', handleGoToOffset)
+  useScopeEventListener(
+    'editor:gotoOffset',
+    useCallback(
+      (_event, options) => {
+        setCursorPositionAndScroll(view, options.gotoOffset)
+      },
+      [view]
+    )
+  )
 
   // dispatch 'cursor:editor:update' to Angular scope (for synctex and realtime)
   const dispatchCursorUpdate = useScopeEventEmitter('cursor:editor:update')
@@ -539,8 +540,8 @@ function useCodeMirrorScope(view: EditorView) {
 
   // set the compile log annotations when they change
   useEffect(() => {
-    if (currentDoc && logEntryAnnotations) {
-      const annotations = logEntryAnnotations[currentDoc.doc_id]
+    if (currentDocument && logEntryAnnotations) {
+      const annotations = logEntryAnnotations[currentDocument.doc_id]
 
       window.setTimeout(() => {
         view.dispatch(
@@ -550,54 +551,21 @@ function useCodeMirrorScope(view: EditorView) {
         )
       })
     }
-  }, [view, currentDoc, logEntryAnnotations])
+  }, [view, currentDocument, logEntryAnnotations])
 
   const highlightsRef = useRef<{ cursorHighlights: Highlight[] }>({
     cursorHighlights: [],
   })
 
   useEffect(() => {
-    if (cursorHighlights && currentDoc) {
-      const items = cursorHighlights[currentDoc.doc_id]
+    if (cursorHighlights && currentDocument) {
+      const items = cursorHighlights[currentDocument.doc_id]
       highlightsRef.current.cursorHighlights = items
       window.setTimeout(() => {
         view.dispatch(setCursorHighlights(items))
       })
     }
-  }, [view, cursorHighlights, currentDoc])
-
-  const handleAddLearnedWords = useCallback(
-    (event: CustomEvent<string>) => {
-      // If the word addition is from adding the word to the dictionary via the
-      // editor, there will be a transaction running now so wait for that to
-      // finish before starting a new one
-      window.setTimeout(() => {
-        view.dispatch(addLearnedWord(spellCheckLanguage, event.detail))
-      }, 0)
-    },
-    [spellCheckLanguage, view]
-  )
-
-  useEventListener('learnedWords:add', handleAddLearnedWords)
-
-  const handleRemoveLearnedWords = useCallback(
-    (event: CustomEvent<string>) => {
-      window.setTimeout(() => {
-        view.dispatch(removeLearnedWord(spellCheckLanguage, event.detail))
-      })
-    },
-    [spellCheckLanguage, view]
-  )
-
-  useEventListener('learnedWords:remove', handleRemoveLearnedWords)
-
-  const handleResetLearnedWords = useCallback(() => {
-    window.setTimeout(() => {
-      view.dispatch(resetLearnedWords())
-    })
-  }, [view])
-
-  useEventListener('learnedWords:reset', handleResetLearnedWords)
+  }, [view, cursorHighlights, currentDocument])
 
   useEventListener(
     'editor:focus',

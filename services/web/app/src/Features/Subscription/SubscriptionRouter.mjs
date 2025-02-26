@@ -119,6 +119,22 @@ export default {
       SubscriptionGroupController.upgradeSubscription
     )
 
+    webRouter.get(
+      '/user/subscription/group/missing-billing-information',
+      AuthenticationController.requireLogin(),
+      RateLimiterMiddleware.rateLimit(subscriptionRateLimiter),
+      SubscriptionGroupController.flexibleLicensingSplitTest,
+      SubscriptionGroupController.missingBillingInformation
+    )
+
+    webRouter.get(
+      '/user/subscription/group/manually-collected-subscription',
+      AuthenticationController.requireLogin(),
+      RateLimiterMiddleware.rateLimit(subscriptionRateLimiter),
+      SubscriptionGroupController.flexibleLicensingSplitTest,
+      SubscriptionGroupController.manuallyCollectedSubscription
+    )
+
     // Team invites
     webRouter.get(
       '/subscription/invites/:token/',
@@ -204,6 +220,23 @@ export default {
       AuthenticationController.requireLogin(),
       RateLimiterMiddleware.rateLimit(subscriptionRateLimiter),
       SubscriptionController.cancelSubscription
+    )
+    webRouter.post(
+      '/user/subscription/pause/:pauseCycles',
+      AuthenticationController.requireLogin(),
+      validate({
+        params: Joi.object({
+          pauseCycles: Joi.number().integer().max(12),
+        }),
+      }),
+      RateLimiterMiddleware.rateLimit(subscriptionRateLimiter),
+      SubscriptionController.pauseSubscription
+    )
+    webRouter.post(
+      '/user/subscription/resume',
+      AuthenticationController.requireLogin(),
+      RateLimiterMiddleware.rateLimit(subscriptionRateLimiter),
+      SubscriptionController.resumeSubscription
     )
     webRouter.post(
       '/user/subscription/reactivate',

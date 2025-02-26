@@ -1,8 +1,6 @@
 import {
   CSSProperties,
-  Dispatch,
   FC,
-  SetStateAction,
   useCallback,
   useEffect,
   useMemo,
@@ -34,15 +32,23 @@ import OLTooltip from '@/features/ui/components/ol/ol-tooltip'
 import { useModalsContext } from '@/features/ide-react/context/modals-context'
 import { numberOfChangesInSelection } from '../utils/changes-in-selection'
 import { useEditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
+import classNames from 'classnames'
+import useEventListener from '@/shared/hooks/use-event-listener'
+import getMeta from '@/utils/meta'
 
+const isReviewerRoleEnabled = getMeta('ol-isReviewerRoleEnabled')
 const TRACK_CHANGES_ON_WIDGET_HEIGHT = 25
-const CM_LINE_RIGHT_PADDING = 2
+const EDIT_MODE_SWITCH_WIDGET_HEIGHT = 40
+const CM_LINE_RIGHT_PADDING = isReviewerRoleEnabled ? 8 : 2
+const TOOLTIP_SHOW_DELAY = 120
 
 const ReviewTooltipMenu: FC = () => {
   const state = useCodeMirrorStateContext()
   const view = useCodeMirrorViewContext()
   const isViewer = useViewerPermissions()
   const [show, setShow] = useState(true)
+  const { setView } = useReviewPanelViewActionsContext()
+  const { setReviewPanelOpen } = useLayoutContext()
 
   const tooltipState = state.field(reviewTooltipStateField, false)?.tooltip
   const previousTooltipState = usePreviousValue(tooltipState)
@@ -52,36 +58,6 @@ const ReviewTooltipMenu: FC = () => {
       setShow(true)
     }
   }, [tooltipState, previousTooltipState])
-
-  if (isViewer || !show || !tooltipState) {
-    return null
-  }
-
-  const tooltipView = getTooltip(view, tooltipState)
-
-  if (!tooltipView) {
-    return null
-  }
-
-  return ReactDOM.createPortal(
-    <ReviewTooltipMenuContent setShow={setShow} />,
-    tooltipView.dom
-  )
-}
-
-const ReviewTooltipMenuContent: FC<{
-  setShow: Dispatch<SetStateAction<boolean>>
-}> = ({ setShow }) => {
-  const { t } = useTranslation()
-  const view = useCodeMirrorViewContext()
-  const state = useCodeMirrorStateContext()
-  const { setReviewPanelOpen, reviewPanelOpen } = useLayoutContext()
-  const { setView } = useReviewPanelViewActionsContext()
-  const ranges = useRangesContext()
-  const { acceptChanges, rejectChanges } = useRangesActionsContext()
-  const { showGenericConfirmModal } = useModalsContext()
-  const { wantTrackChanges } = useEditorManagerContext()
-  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | undefined>()
 
   const addComment = useCallback(() => {
     setReviewPanelOpen(true)
@@ -99,12 +75,37 @@ const ReviewTooltipMenuContent: FC<{
     setShow(false)
   }, [setReviewPanelOpen, setView, setShow, view, state.selection.main])
 
-  useEffect(() => {
-    window.addEventListener('add-new-review-comment', addComment)
-    return () => {
-      window.removeEventListener('add-new-review-comment', addComment)
-    }
-  }, [addComment])
+  useEventListener('add-new-review-comment', addComment)
+
+  if (isViewer || !show || !tooltipState) {
+    return null
+  }
+
+  const tooltipView = getTooltip(view, tooltipState)
+
+  if (!tooltipView) {
+    return null
+  }
+
+  return ReactDOM.createPortal(
+    <ReviewTooltipMenuContent onAddComment={addComment} />,
+    tooltipView.dom
+  )
+}
+
+const ReviewTooltipMenuContent: FC<{ onAddComment: () => void }> = ({
+  onAddComment,
+}) => {
+  const { t } = useTranslation()
+  const view = useCodeMirrorViewContext()
+  const state = useCodeMirrorStateContext()
+  const { reviewPanelOpen } = useLayoutContext()
+  const ranges = useRangesContext()
+  const { acceptChanges, rejectChanges } = useRangesActionsContext()
+  const { showGenericConfirmModal } = useModalsContext()
+  const { wantTrackChanges } = useEditorManagerContext()
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties | undefined>()
+  const [visible, setVisible] = useState(false)
 
   const changeIdsInSelection = useMemo(() => {
     return (ranges?.changes ?? [])
@@ -179,10 +180,12 @@ const ReviewTooltipMenuContent: FC<{
           return
         }
 
-        const widgetOffset =
-          wantTrackChanges && !reviewPanelOpen
-            ? TRACK_CHANGES_ON_WIDGET_HEIGHT
-            : 0
+        let widgetOffset = 0
+        if (isReviewerRoleEnabled) {
+          widgetOffset = EDIT_MODE_SWITCH_WIDGET_HEIGHT
+        } else if (wantTrackChanges && !reviewPanelOpen) {
+          widgetOffset = TRACK_CHANGES_ON_WIDGET_HEIGHT
+        }
 
         return {
           position: 'fixed' as const,
@@ -196,11 +199,27 @@ const ReviewTooltipMenuContent: FC<{
     })
   }, [view, reviewPanelOpen, wantTrackChanges])
 
+  useEffect(() => {
+    setVisible(false)
+    const timeout = setTimeout(() => {
+      setVisible(true)
+    }, TOOLTIP_SHOW_DELAY)
+
+    return () => {
+      clearTimeout(timeout)
+    }
+  }, [])
+
   return (
-    <div className="review-tooltip-menu" style={tooltipStyle}>
+    <div
+      className={classNames('review-tooltip-menu', {
+        'review-tooltip-menu-visible': visible,
+      })}
+      style={tooltipStyle}
+    >
       <button
         className="review-tooltip-menu-button review-tooltip-add-comment-button"
-        onClick={addComment}
+        onClick={onAddComment}
       >
         <MaterialIcon type="chat" />
         {t('add_comment')}

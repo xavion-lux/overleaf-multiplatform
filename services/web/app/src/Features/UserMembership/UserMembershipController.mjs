@@ -13,6 +13,7 @@ import { Parser as CSVParser } from 'json2csv'
 import { expressify } from '@overleaf/promise-utils'
 import SplitTestHandler from '../SplitTests/SplitTestHandler.js'
 import PlansLocator from '../Subscription/PlansLocator.js'
+import RecurlyClient from '../Subscription/RecurlyClient.js'
 
 async function manageGroupMembers(req, res, next) {
   const { entity: subscription, entityConfig } = req
@@ -38,6 +39,19 @@ async function manageGroupMembers(req, res, next) {
   )
 
   const plan = PlansLocator.findLocalPlanInSettings(subscription.planCode)
+  const userId = SessionManager.getLoggedInUserId(req.session)
+  const isAdmin = subscription.admin_id.toString() === userId
+  const recurlySubscription = subscription.recurlySubscription_id
+    ? await RecurlyClient.promises.getSubscription(
+        subscription.recurlySubscription_id
+      )
+    : undefined
+
+  const canUseAddSeatsFeature =
+    plan?.canUseFlexibleLicensing &&
+    isAdmin &&
+    recurlySubscription &&
+    !recurlySubscription.pendingChange
 
   res.render('user_membership/group-members-react', {
     name: entityName,
@@ -47,6 +61,7 @@ async function manageGroupMembers(req, res, next) {
     managedUsersActive: subscription.managedUsersEnabled,
     groupSSOActive: ssoConfig?.enabled,
     canUseFlexibleLicensing: plan?.canUseFlexibleLicensing,
+    canUseAddSeatsFeature,
   })
 }
 

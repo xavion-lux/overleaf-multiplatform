@@ -34,7 +34,6 @@ export const EditorContext = createContext<
         submitBtnHtml?: string
       }
       hasPremiumCompile?: boolean
-      loading?: boolean
       renameProject: (newName: string) => void
       setPermissionsLevel: (permissionsLevel: PermissionsLevel) => void
       showSymbolPalette?: boolean
@@ -60,7 +59,7 @@ export const EditorContext = createContext<
 >(undefined)
 
 export const EditorProvider: FC = ({ children }) => {
-  const ide = useIdeContext()
+  const { socket } = useIdeContext()
   const { id: userId, featureUsage } = useUserContext()
   const { role } = useDetachContext()
   const { showGenericMessageModal } = useModalsContext()
@@ -84,7 +83,6 @@ export const EditorProvider: FC = ({ children }) => {
     )
   }, [])
 
-  const [loading] = useScopeValue('state.loading')
   const [projectName, setProjectName] = useScopeValue('project.name')
   const [permissionsLevel, setPermissionsLevel] =
     useScopeValue('permissionsLevel')
@@ -127,12 +125,11 @@ export const EditorProvider: FC = ({ children }) => {
   )
 
   useEffect(() => {
-    if (ide?.socket) {
-      ide.socket.on('projectNameUpdated', setProjectName)
-      return () =>
-        ide.socket.removeListener('projectNameUpdated', setProjectName)
+    if (socket) {
+      socket.on('projectNameUpdated', setProjectName)
+      return () => socket.removeListener('projectNameUpdated', setProjectName)
     }
-  }, [ide?.socket, setProjectName])
+  }, [socket, setProjectName])
 
   const renameProject = useCallback(
     (newName: string) => {
@@ -189,7 +186,6 @@ export const EditorProvider: FC = ({ children }) => {
     () => ({
       cobranding,
       hasPremiumCompile: features?.compileGroup === 'priority',
-      loading,
       renameProject,
       permissionsLevel: outOfSync ? 'readOnly' : permissionsLevel,
       setPermissionsLevel,
@@ -216,7 +212,6 @@ export const EditorProvider: FC = ({ children }) => {
       features?.compileGroup,
       owner,
       userId,
-      loading,
       renameProject,
       permissionsLevel,
       setPermissionsLevel,

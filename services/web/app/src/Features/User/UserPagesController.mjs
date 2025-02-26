@@ -79,7 +79,8 @@ async function settingsPage(req, res) {
     )
     personalAccessTokens = results?.[0] ?? []
   } catch (error) {
-    logger.error(OError.tag(error))
+    const err = OError.tag(error, 'listPersonalAccessTokens hook failed')
+    logger.error({ err, userId }, err.message)
   }
 
   let currentManagedUserAdminEmail
@@ -153,6 +154,9 @@ async function settingsPage(req, res) {
       writefull: {
         enabled: Boolean(user.writefull?.enabled),
       },
+      aiErrorAssistant: {
+        enabled: Boolean(user.aiErrorAssistant?.enabled),
+      },
     },
     hasPassword: !!user.hashedPassword,
     shouldAllowEditingDetails,
@@ -192,6 +196,22 @@ async function accountSuspended(req, res) {
   })
 }
 
+async function reconfirmAccountPage(req, res) {
+  const pageData = {
+    reconfirm_email: req.session.reconfirm_email,
+  }
+  const { variant } = await SplitTestHandler.promises.getAssignment(
+    req,
+    res,
+    'auth-pages-bs5'
+  )
+
+  const template =
+    variant === 'enabled' ? 'user/reconfirm-bs5' : 'user/reconfirm'
+
+  res.render(template, pageData)
+}
+
 const UserPagesController = {
   accountSuspended: expressify(accountSuspended),
 
@@ -221,7 +241,8 @@ const UserPagesController = {
       AuthenticationController.setRedirectInSession(req, req.query.redir)
     }
     res.render('user/login', {
-      title: 'login',
+      title: Settings.nav?.login_support_title || 'login',
+      login_support_text: Settings.nav?.login_support_text,
     })
   },
 
@@ -235,13 +256,7 @@ const UserPagesController = {
     res.render('user/one_time_login')
   },
 
-  renderReconfirmAccountPage(req, res) {
-    const pageData = {
-      reconfirm_email: req.session.reconfirm_email,
-    }
-    // when a user must reconfirm their account
-    res.render('user/reconfirm', pageData)
-  },
+  renderReconfirmAccountPage: expressify(reconfirmAccountPage),
 
   settingsPage: expressify(settingsPage),
 

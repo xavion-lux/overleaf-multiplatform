@@ -13,7 +13,6 @@ describe('editor', () => {
     const fileName = 'test.tex'
     const word = createRandomLetterString()
     login('user@example.com')
-    cy.visit('/project')
     createProject('test-project')
 
     cy.log('create new project file')
@@ -86,7 +85,7 @@ describe('editor', () => {
               const linkSharingReadAndWrite = el.text()
               login('collaborator@example.com')
               cy.visit(linkSharingReadAndWrite)
-              cy.get('button').contains('Join Project').click()
+              cy.get('button').contains('OK, join project').click()
               cy.log(
                 'navigate to project dashboard to avoid cross session requests from editor'
               )
@@ -107,7 +106,7 @@ describe('editor', () => {
       cy.intercept('POST', '**/track_changes').as('enableTrackChanges')
       cy.findByText('Everyone')
         .parent()
-        .within(() => cy.get('.input-switch').click())
+        .within(() => cy.get('.form-check-input').click())
       cy.wait('@enableTrackChanges')
 
       login('collaborator@example.com')
@@ -146,7 +145,7 @@ describe('editor', () => {
       cy.intercept('POST', '**/track_changes').as('enableTrackChanges')
       cy.findByText('Everyone')
         .parent()
-        .within(() => cy.get('.input-switch').click())
+        .within(() => cy.get('.form-check-input').click())
       cy.wait('@enableTrackChanges')
 
       login('collaborator@example.com')
@@ -185,9 +184,6 @@ describe('editor', () => {
       login('user@example.com')
       cy.visit(`/project`)
       createProject(`project-${uuid()}`, { type: 'Example Project' })
-      // wait until the main document is rendered
-      cy.findByText(/Loading/).should('not.exist')
-      cy.findByText(/Your Paper/)
     })
 
     it('renders jpg', () => {
@@ -214,7 +210,7 @@ describe('editor', () => {
       projectName = `project-${uuid()}`
       login('user@example.com')
       cy.visit(`/project`)
-      createProject(projectName, { type: 'Example Project' })
+      createProject(projectName)
       cy.get('button').contains('New file').click({ force: true })
     })
 

@@ -4,7 +4,7 @@ import {
   ReviewPanelCommentThreadMessage,
 } from '../../../../../types/review-panel/review-panel'
 import { useTranslation } from 'react-i18next'
-import { formatTimeBasedOnYear } from '@/features/utils/format-date'
+import { FormatTimeBasedOnYear } from '@/shared/components/format-time-based-on-year'
 import OLTooltip from '@/features/ui/components/ol/ol-tooltip'
 import MaterialIcon from '@/shared/components/material-icon'
 import AutoExpandingTextArea from '@/shared/components/auto-expanding-text-area'
@@ -13,6 +13,8 @@ import { ExpandableContent } from './review-panel-expandable-content'
 import ReviewPanelDeleteCommentModal from './review-panel-delete-comment-modal'
 import { useUserContext } from '@/shared/context/user-context'
 import ReviewPanelEntryUser from './review-panel-entry-user'
+import { usePermissionsContext } from '@/features/ide-react/context/permissions-context'
+import { PreventSelectingEntry } from './review-panel-prevent-selecting'
 
 export const ReviewPanelMessage: FC<{
   message: ReviewPanelCommentThreadMessage
@@ -36,6 +38,14 @@ export const ReviewPanelMessage: FC<{
   const [deleting, setDeleting] = useState(false)
   const [content, setContent] = useState(message.content)
   const user = useUserContext()
+  const permissions = usePermissionsContext()
+
+  const isCommentAuthor = user.id === message.user.id
+  const canEdit = isCommentAuthor
+  const canResolve =
+    permissions.resolveAllComments ||
+    (permissions.resolveOwnComments && isCommentAuthor)
+  const canDelete = canResolve
 
   const handleEditOption = useCallback(() => setEditing(true), [])
   const showDeleteModal = useCallback(() => setDeleting(true), [])
@@ -57,40 +67,45 @@ export const ReviewPanelMessage: FC<{
         <div>
           <ReviewPanelEntryUser user={message.user} />
           <div className="review-panel-entry-time">
-            {formatTimeBasedOnYear(message.timestamp)}
+            <FormatTimeBasedOnYear date={message.timestamp} />
           </div>
         </div>
 
         <div className="review-panel-entry-actions">
-          {!editing && !isReply && !isThreadResolved && (
-            <OLTooltip
-              id="resolve-thread"
-              overlayProps={{ placement: 'bottom' }}
-              description={t('resolve_comment')}
-              tooltipProps={{ className: 'review-panel-tooltip' }}
-            >
-              <button
-                type="button"
-                tabIndex={0}
-                className="btn"
-                onClick={onResolve}
+          {!editing && !isReply && !isThreadResolved && canResolve && (
+            <PreventSelectingEntry>
+              <OLTooltip
+                id="resolve-thread"
+                overlayProps={{ placement: 'bottom' }}
+                description={t('resolve_comment')}
+                tooltipProps={{ className: 'review-panel-tooltip' }}
               >
-                <MaterialIcon
-                  type="check"
-                  className="review-panel-entry-actions-icon"
-                  accessibilityLabel={t('resolve_comment')}
-                />
-              </button>
-            </OLTooltip>
+                <button
+                  type="button"
+                  tabIndex={0}
+                  className="btn"
+                  onClick={onResolve}
+                >
+                  <MaterialIcon
+                    type="check"
+                    className="review-panel-entry-actions-icon"
+                    accessibilityLabel={t('resolve_comment')}
+                  />
+                </button>
+              </OLTooltip>
+            </PreventSelectingEntry>
           )}
 
           {!editing && !isThreadResolved && (
-            <ReviewPanelCommentOptions
-              belongsToCurrentUser={user.id === message.user.id}
-              onEdit={handleEditOption}
-              onDelete={showDeleteModal}
-              id={message.id}
-            />
+            <PreventSelectingEntry>
+              <ReviewPanelCommentOptions
+                canDelete={canDelete}
+                canEdit={canEdit}
+                onEdit={handleEditOption}
+                onDelete={showDeleteModal}
+                id={message.id}
+              />
+            </PreventSelectingEntry>
           )}
         </div>
       </div>

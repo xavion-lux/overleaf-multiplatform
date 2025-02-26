@@ -17,6 +17,7 @@ import * as Errors from './Errors.js'
 import * as LocalFileWriter from './LocalFileWriter.js'
 import * as HashManager from './HashManager.js'
 import * as HistoryBlobTranslator from './HistoryBlobTranslator.js'
+import { promisifyMultiResult } from '@overleaf/promise-utils'
 
 const HTTP_REQUEST_TIMEOUT = Settings.overleaf.history.requestTimeout
 
@@ -78,10 +79,36 @@ export function getMostRecentVersion(projectId, historyId, callback) {
           err1 || err2,
           mostRecentVersion,
           projectStructureAndDocVersions,
-          lastChange
+          lastChange,
+          chunk
         )
       })
     )
+  })
+}
+
+/**
+ * @param {string} projectId
+ * @param {string} historyId
+ * @param {Object} opts
+ * @param {boolean} [opts.readOnly]
+ * @param {(error: Error, rawChunk?: { startVersion: number, endVersion: number, endTimestamp: Date}) => void} callback
+ */
+export function getMostRecentVersionRaw(projectId, historyId, opts, callback) {
+  const path = `projects/${historyId}/latest/history/raw`
+  logger.debug(
+    { projectId, historyId },
+    'getting raw chunk from history service'
+  )
+  const qs = opts.readOnly ? { readOnly: true } : {}
+  _requestHistoryService({ path, json: true, qs }, (err, body) => {
+    if (err) return callback(OError.tag(err))
+    const { startVersion, endVersion, endTimestamp } = body
+    callback(null, {
+      startVersion,
+      endVersion,
+      endTimestamp: new Date(endTimestamp),
+    })
   })
 }
 
@@ -95,7 +122,8 @@ function _requestChunk(options, callback) {
       chunk.chunk == null ||
       chunk.chunk.startVersion == null
     ) {
-      return callback(new OError('unexpected response'))
+      const { path } = options
+      return callback(new OError('unexpected response', { path }))
     }
     callback(null, chunk)
   })
@@ -103,28 +131,36 @@ function _requestChunk(options, callback) {
 
 function _getLatestProjectVersion(projectId, chunk, callback) {
   // find the initial project version
-  let projectVersion =
-    chunk.chunk.history.snapshot && chunk.chunk.history.snapshot.projectVersion
-  // keep track of any errors
+  const projectVersionInSnapshot = chunk.chunk.history.snapshot?.projectVersion
+  let projectVersion = projectVersionInSnapshot
+  const chunkStartVersion = chunk.chunk.startVersion
+  // keep track of any first error
   let error = null
   // iterate over the changes in chunk to find the most recent project version
-  for (const change of chunk.chunk.history.changes || []) {
-    if (change.projectVersion != null) {
+  for (const [changeIdx, change] of (
+    chunk.chunk.history.changes || []
+  ).entries()) {
+    const projectVersionInChange = change.projectVersion
+    if (projectVersionInChange != null) {
       if (
         projectVersion != null &&
-        Versions.lt(change.projectVersion, projectVersion)
+        Versions.lt(projectVersionInChange, projectVersion)
       ) {
-        logger.warn(
-          { projectId, chunk, projectVersion, change },
-          'project structure version out of order in chunk'
-        )
         if (!error) {
           error = new Errors.OpsOutOfOrderError(
-            'project structure version out of order'
+            'project structure version out of order',
+            {
+              projectId,
+              chunkStartVersion,
+              projectVersionInSnapshot,
+              changeIdx,
+              projectVersion,
+              projectVersionInChange,
+            }
           )
         }
       } else {
-        projectVersion = change.projectVersion
+        projectVersion = projectVersionInChange
       }
     }
   }
@@ -150,16 +186,16 @@ function _getLatestV2DocVersions(projectId, chunk, callback) {
           v2DocVersions[docId].v != null &&
           Versions.lt(v, v2DocVersions[docId].v)
         ) {
-          logger.warn(
-            {
-              projectId,
-              docId,
-              changeVersion: docInfo,
-              previousVersion: v2DocVersions[docId],
-            },
-            'doc version out of order in chunk'
-          )
           if (!error) {
+            logger.warn(
+              {
+                projectId,
+                docId,
+                changeVersion: docInfo,
+                previousVersion: v2DocVersions[docId],
+              },
+              'doc version out of order in chunk'
+            )
             error = new Errors.OpsOutOfOrderError('doc version out of order')
           }
         } else {
@@ -223,7 +259,6 @@ export function sendChanges(
           statusCode: error.statusCode,
           body: error.body,
         })
-        logger.warn(error)
         return callback(error)
       }
       callback()
@@ -247,6 +282,7 @@ function createBlobFromString(historyId, data, fileId, callback) {
 }
 
 function _checkBlobExists(historyId, hash, callback) {
+  if (!hash) return callback(null, false)
   const url = `${Settings.overleaf.history.host}/projects/${historyId}/blobs/${hash}`
   fetchNothing(url, {
     method: 'HEAD',
@@ -256,11 +292,34 @@ function _checkBlobExists(historyId, hash, callback) {
       callback(null, true)
     })
     .catch(err => {
-      if (err instanceof RequestFailedError) {
+      if (err instanceof RequestFailedError && err.response.status === 404) {
         return callback(null, false)
       }
       callback(OError.tag(err), false)
     })
+}
+
+function _rewriteFilestoreUrl(url, projectId, callback) {
+  if (!url) {
+    return { fileId: null, filestoreURL: null }
+  }
+  // Rewrite the filestore url to point to the location in the local
+  // settings for this service (this avoids problems with cross-
+  // datacentre requests when running filestore in multiple locations).
+  const { pathname: fileStorePath } = new URL(url)
+  const urlMatch = /^\/project\/([0-9a-f]{24})\/file\/([0-9a-f]{24})$/.exec(
+    fileStorePath
+  )
+  if (urlMatch == null) {
+    return callback(new OError('invalid file for blob creation'))
+  }
+  if (urlMatch[1] !== projectId) {
+    return callback(new OError('invalid project for blob creation'))
+  }
+
+  const fileId = urlMatch[2]
+  const filestoreURL = `${Settings.apis.filestore.url}/project/${projectId}/file/${fileId}`
+  return { filestoreURL, fileId }
 }
 
 export function createBlobForUpdate(projectId, historyId, update, callback) {
@@ -303,31 +362,25 @@ export function createBlobForUpdate(projectId, historyId, update, callback) {
         }
       }
     )
-  } else if (update.file != null && update.url != null) {
-    // Rewrite the filestore url to point to the location in the local
-    // settings for this service (this avoids problems with cross-
-    // datacentre requests when running filestore in multiple locations).
-    const { pathname: fileStorePath } = new URL(update.url)
-    const urlMatch = /^\/project\/([0-9a-f]{24})\/file\/([0-9a-f]{24})$/.exec(
-      fileStorePath
+  } else if (
+    update.file != null &&
+    (update.url != null || update.createdBlob)
+  ) {
+    const { fileId, filestoreURL } = _rewriteFilestoreUrl(
+      update.url,
+      projectId,
+      callback
     )
-    if (urlMatch == null) {
-      return callback(new OError('invalid file for blob creation'))
-    }
-    if (urlMatch[1] !== projectId) {
-      return callback(new OError('invalid project for blob creation'))
-    }
-
-    const fileId = urlMatch[2]
-    const filestoreURL = `${Settings.apis.filestore.url}/project/${projectId}/file/${fileId}`
-
     _checkBlobExists(historyId, update.hash, (err, blobExists) => {
       if (err) {
-        logger.warn(
-          { err, projectId, fileId, update },
-          'error checking whether blob exists, reading from filestore'
+        return callback(
+          new OError(
+            'error checking whether blob exists',
+            { projectId, historyId, update },
+            err
+          )
         )
-      } else if (update.createdBlob && blobExists) {
+      } else if (blobExists) {
         logger.debug(
           { projectId, fileId, update },
           'Skipping blob creation as it has already been created'
@@ -339,6 +392,16 @@ export function createBlobForUpdate(projectId, historyId, update, callback) {
           'created blob does not exist, reading from filestore'
         )
       }
+
+      if (!filestoreURL) {
+        return callback(
+          new OError('no filestore URL provided and blob was not created')
+        )
+      }
+      if (!Settings.apis.filestore.enabled) {
+        return callback(new OError('blocking filestore read', { update }))
+      }
+
       fetchStream(filestoreURL, {
         signal: AbortSignal.timeout(HTTP_REQUEST_TIMEOUT),
       })
@@ -532,21 +595,27 @@ function _requestHistoryService(options, callback) {
     if (res.statusCode >= 200 && res.statusCode < 300) {
       callback(null, body)
     } else {
+      const { method, url, qs } = requestOptions
       error = new OError(
-        `history store a non-success status code: ${res.statusCode}`
+        `history store a non-success status code: ${res.statusCode}`,
+        { method, url, qs, statusCode: res.statusCode }
       )
-      error.statusCode = res.statusCode
-      error.body = body
-      logger.warn({ err: error }, error.message)
       callback(error)
     }
   })
 }
 
 export const promises = {
+  /** @type {(projectId: string, historyId: string) => Promise<{chunk: import('overleaf-editor-core/lib/types.js').RawChunk}>} */
   getMostRecentChunk: promisify(getMostRecentChunk),
   getChunkAtVersion: promisify(getChunkAtVersion),
-  getMostRecentVersion: promisify(getMostRecentVersion),
+  getMostRecentVersion: promisifyMultiResult(getMostRecentVersion, [
+    'version',
+    'projectStructureAndDocVersions',
+    'lastChange',
+    'mostRecentChunk',
+  ]),
+  getMostRecentVersionRaw: promisify(getMostRecentVersionRaw),
   getProjectBlob: promisify(getProjectBlob),
   getProjectBlobStream: promisify(getProjectBlobStream),
   sendChanges: promisify(sendChanges),

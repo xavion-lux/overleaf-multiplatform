@@ -1,10 +1,10 @@
 import { expect } from 'chai'
 import async from 'async'
-import User from './helpers/User.js'
+import User from './helpers/User.mjs'
 import request from './helpers/request.js'
 import settings from '@overleaf/settings'
 import Features from '../../../app/src/infrastructure/Features.js'
-import expectErrorResponse from './helpers/expectErrorResponse.js'
+import expectErrorResponse from './helpers/expectErrorResponse.mjs'
 
 function tryReadAccess(user, projectId, test, callback) {
   async.series(
@@ -678,6 +678,11 @@ describe('Authorization', function () {
     })
 
     it('should allow an anonymous user chat messages access', function (done) {
+      // chat access for anonymous users is a CE/SP-only feature, although currently broken
+      // https://github.com/overleaf/internal/issues/10944
+      if (Features.hasFeature('saas')) {
+        this.skip()
+      }
       expectChatAccess(this.anon, this.projectId, done)
     })
 

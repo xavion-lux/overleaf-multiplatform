@@ -103,6 +103,35 @@ async function ensureUserCanWriteProjectSettings(req, res, next) {
   next()
 }
 
+async function ensureUserCanDeleteOrResolveThread(req, res, next) {
+  const projectId = _getProjectId(req)
+  const docId = _getDocId(req)
+  const threadId = _getThreadId(req)
+  const userId = _getUserId(req)
+  const token = TokenAccessHandler.getRequestToken(req, projectId)
+  const canDeleteThread =
+    await AuthorizationManager.promises.canUserDeleteOrResolveThread(
+      userId,
+      projectId,
+      docId,
+      threadId,
+      token
+    )
+  if (canDeleteThread) {
+    logger.debug(
+      { userId, projectId },
+      'allowing user to delete or resolve a comment thread'
+    )
+    return next()
+  }
+
+  logger.debug(
+    { userId, projectId, threadId },
+    'denying user to delete or resolve a comment thread'
+  )
+  return HttpErrorHandler.forbidden(req, res)
+}
+
 async function ensureUserCanWriteProjectContent(req, res, next) {
   const projectId = _getProjectId(req)
   const userId = _getUserId(req)
@@ -125,6 +154,32 @@ async function ensureUserCanWriteProjectContent(req, res, next) {
     'denying user write access to project settings'
   )
   HttpErrorHandler.forbidden(req, res)
+}
+
+async function ensureUserCanWriteOrReviewProjectContent(req, res, next) {
+  const projectId = _getProjectId(req)
+  const userId = _getUserId(req)
+  const token = TokenAccessHandler.getRequestToken(req, projectId)
+
+  const canWriteOrReviewProjectContent =
+    await AuthorizationManager.promises.canUserWriteOrReviewProjectContent(
+      userId,
+      projectId,
+      token
+    )
+  if (canWriteOrReviewProjectContent) {
+    logger.debug(
+      { userId, projectId },
+      'allowing user write or review access to project content'
+    )
+    return next()
+  }
+
+  logger.debug(
+    { userId, projectId },
+    'denying user write or review access to project content'
+  )
+  return HttpErrorHandler.forbidden(req, res)
 }
 
 async function ensureUserCanAdminProject(req, res, next) {
@@ -166,6 +221,28 @@ function _getProjectId(req) {
   return projectId
 }
 
+function _getDocId(req) {
+  const docId = req.params.doc_id
+  if (!docId) {
+    throw new Error('Expected doc_id in request parameters')
+  }
+  if (!ObjectId.isValid(docId)) {
+    throw new Errors.NotFoundError(`invalid docId: ${docId}`)
+  }
+  return docId
+}
+
+function _getThreadId(req) {
+  const threadId = req.params.thread_id
+  if (!threadId) {
+    throw new Error('Expected thread_id in request parameters')
+  }
+  if (!ObjectId.isValid(threadId)) {
+    throw new Errors.NotFoundError(`invalid threadId: ${threadId}`)
+  }
+  return threadId
+}
+
 function _getUserId(req) {
   return (
     SessionManager.getLoggedInUserId(req.session) ||
@@ -200,8 +277,14 @@ module.exports = {
   ensureUserCanWriteProjectSettings: expressify(
     ensureUserCanWriteProjectSettings
   ),
+  ensureUserCanDeleteOrResolveThread: expressify(
+    ensureUserCanDeleteOrResolveThread
+  ),
   ensureUserCanWriteProjectContent: expressify(
     ensureUserCanWriteProjectContent
+  ),
+  ensureUserCanWriteOrReviewProjectContent: expressify(
+    ensureUserCanWriteOrReviewProjectContent
   ),
   ensureUserCanAdminProject: expressify(ensureUserCanAdminProject),
   ensureUserIsSiteAdmin: expressify(ensureUserIsSiteAdmin),

@@ -1,8 +1,9 @@
-import { screen, within } from '@testing-library/dom'
+import { screen, within, render } from '@testing-library/react'
 import { expect } from 'chai'
 import fetchMock from 'fetch-mock'
 import SettingsEditorTheme from '../../../../../../frontend/js/features/editor-left-menu/components/settings/settings-editor-theme'
-import { renderWithEditorContext } from '../../../../helpers/render-with-context'
+import { EditorLeftMenuProvider } from '@/features/editor-left-menu/components/editor-left-menu-context'
+import { EditorProviders } from '../../../../helpers/editor-providers'
 
 describe('<SettingsEditorTheme />', function () {
   const editorThemes = ['editortheme-1', 'editortheme-2', 'editortheme-3']
@@ -19,7 +20,13 @@ describe('<SettingsEditorTheme />', function () {
   })
 
   it('shows correct menu', async function () {
-    renderWithEditorContext(<SettingsEditorTheme />)
+    render(
+      <EditorProviders>
+        <EditorLeftMenuProvider>
+          <SettingsEditorTheme />
+        </EditorLeftMenuProvider>
+      </EditorProviders>
+    )
 
     const select = screen.getByLabelText('Editor theme')
 

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Card, ListGroup } from 'react-bootstrap-5'
-import { formatCurrencyLocalized } from '@/shared/utils/currency'
+import { formatCurrency } from '@/shared/utils/currency'
 import { formatTime } from '@/features/utils/format-date'
 import {
   GroupPlanUpgrade,
@@ -38,17 +38,30 @@ function UpgradeSummary({ subscriptionChange }: UpgradeSummaryProps) {
                 {subscriptionChange.nextInvoice.plan.name} x {totalLicenses}{' '}
                 {t('users')}
               </span>
-              <span>
-                {formatCurrencyLocalized(
+              <span data-testid="subtotal">
+                {formatCurrency(
                   subscriptionChange.immediateCharge.subtotal,
                   subscriptionChange.currency
                 )}
               </span>
             </ListGroup.Item>
+            {subscriptionChange.immediateCharge.discount !== 0 && (
+              <ListGroup.Item className="bg-transparent border-0 px-0 gap-3 card-description-secondary">
+                <span className="me-auto">{t('discount')}</span>
+                <span data-testid="discount">
+                  (
+                  {formatCurrency(
+                    subscriptionChange.immediateCharge.discount,
+                    subscriptionChange.currency
+                  )}
+                  )
+                </span>
+              </ListGroup.Item>
+            )}
             <ListGroup.Item className="bg-transparent border-0 px-0 gap-3 card-description-secondary">
-              <span className="me-auto">{t('sales_tax')}</span>
-              <span>
-                {formatCurrencyLocalized(
+              <span className="me-auto">{t('vat')}</span>
+              <span data-testid="tax">
+                {formatCurrency(
                   subscriptionChange.immediateCharge.tax,
                   subscriptionChange.currency
                 )}
@@ -56,8 +69,8 @@ function UpgradeSummary({ subscriptionChange }: UpgradeSummaryProps) {
             </ListGroup.Item>
             <ListGroup.Item className="bg-transparent border-0 px-0 gap-3 card-description-secondary">
               <strong className="me-auto">{t('total_due_today')}</strong>
-              <strong>
-                {formatCurrencyLocalized(
+              <strong data-testid="total">
+                {formatCurrency(
                   subscriptionChange.immediateCharge.total,
                   subscriptionChange.currency
                 )}
@@ -72,13 +85,26 @@ function UpgradeSummary({ subscriptionChange }: UpgradeSummaryProps) {
           )}
         </div>
         <div>
-          {t('after_that_well_bill_you_x_annually_on_date_unless_you_cancel', {
-            subtotal: formatCurrencyLocalized(
-              subscriptionChange.nextInvoice.subtotal,
-              subscriptionChange.currency
-            ),
-            date: formatTime(subscriptionChange.nextInvoice.date, 'MMMM D'),
-          })}
+          {t(
+            'after_that_well_bill_you_x_total_y_subtotal_z_tax_annually_on_date_unless_you_cancel',
+            {
+              totalAmount: formatCurrency(
+                subscriptionChange.nextInvoice.total,
+                subscriptionChange.currency
+              ),
+              subtotalAmount: formatCurrency(
+                subscriptionChange.nextInvoice.subtotal,
+                subscriptionChange.currency
+              ),
+              taxAmount: formatCurrency(
+                subscriptionChange.nextInvoice.tax.amount,
+                subscriptionChange.currency
+              ),
+              date: formatTime(subscriptionChange.nextInvoice.date, 'MMMM D'),
+            }
+          )}
+          {subscriptionChange.immediateCharge.discount !== 0 &&
+            ` ${t('coupons_not_included')}.`}
         </div>
       </Card.Body>
     </Card>

@@ -3,15 +3,16 @@ const SubscriptionUpdater = require('./SubscriptionUpdater')
 const SubscriptionLocator = require('./SubscriptionLocator')
 const SubscriptionController = require('./SubscriptionController')
 const { Subscription } = require('../../models/Subscription')
-const SessionManager = require('../Authentication/SessionManager')
 const RecurlyClient = require('./RecurlyClient')
 const PlansLocator = require('./PlansLocator')
 const SubscriptionHandler = require('./SubscriptionHandler')
-
-const PLAN_UPGRADE_MAP = {
-  group_collaborator: 'group_professional',
-  group_collaborator_educational: 'group_professional_educational',
-}
+const GroupPlansData = require('./GroupPlansData')
+const { MEMBERS_LIMIT_ADD_ON_CODE } = require('./RecurlyEntities')
+const {
+  ManuallyCollectedError,
+  PendingChangeError,
+  InactiveError,
+} = require('./Errors')
 
 async function removeUserFromGroup(subscriptionId, userIdToRemove) {
   await SubscriptionUpdater.promises.removeUserFromGroup(
@@ -62,14 +63,46 @@ async function _replaceInArray(model, property, oldValue, newValue) {
 
 async function ensureFlexibleLicensingEnabled(plan) {
   if (!plan?.canUseFlexibleLicensing) {
-    throw new Error('The group plan does not support flexible licencing')
+    throw new Error('The group plan does not support flexible licensing')
   }
 }
 
-async function getUsersGroupSubscriptionDetails(req) {
-  const userId = SessionManager.getLoggedInUserId(req.session)
+async function ensureSubscriptionIsActive(subscription) {
+  if (subscription?.recurlyStatus?.state !== 'active') {
+    throw new InactiveError('The subscription is not active', {
+      subscriptionId: subscription._id.toString(),
+    })
+  }
+}
+
+async function ensureSubscriptionCollectionMethodIsNotManual(
+  recurlySubscription
+) {
+  if (recurlySubscription.isCollectionMethodManual) {
+    throw new ManuallyCollectedError(
+      'This subscription is being collected manually',
+      {
+        recurlySubscription_id: recurlySubscription.id,
+      }
+    )
+  }
+}
+
+async function ensureSubscriptionHasNoPendingChanges(recurlySubscription) {
+  if (recurlySubscription.pendingChange) {
+    throw new PendingChangeError('This subscription has a pending change', {
+      recurlySubscription_id: recurlySubscription.id,
+    })
+  }
+}
+
+async function getUsersGroupSubscriptionDetails(userId) {
   const subscription =
     await SubscriptionLocator.promises.getUsersSubscription(userId)
+
+  if (!subscription) {
+    throw new Error('No subscription was found')
+  }
 
   if (!subscription.groupPlan) {
     throw new Error('User subscription is not a group plan')
@@ -82,41 +115,93 @@ async function getUsersGroupSubscriptionDetails(req) {
   )
 
   return {
+    userId,
     subscription,
     recurlySubscription,
     plan,
   }
 }
 
-async function _addSeatsSubscriptionChange(req) {
-  const adding = req.body.adding
-  const { recurlySubscription, plan } =
-    await getUsersGroupSubscriptionDetails(req)
+async function _addSeatsSubscriptionChange(userId, adding) {
+  const { subscription, recurlySubscription, plan } =
+    await getUsersGroupSubscriptionDetails(userId)
   await ensureFlexibleLicensingEnabled(plan)
-  const userId = SessionManager.getLoggedInUserId(req.session)
+  await ensureSubscriptionIsActive(subscription)
+  await ensureSubscriptionCollectionMethodIsNotManual(recurlySubscription)
+  await ensureSubscriptionHasNoPendingChanges(recurlySubscription)
+
   const currentAddonQuantity =
     recurlySubscription.addOns.find(
-      addOn => addOn.code === plan.membersLimitAddOn
+      addOn => addOn.code === MEMBERS_LIMIT_ADD_ON_CODE
     )?.quantity ?? 0
   // Keeps only the new total quantity of addon
   const nextAddonQuantity = currentAddonQuantity + adding
-  const changeRequest = recurlySubscription.getRequestForAddOnUpdate(
-    plan.membersLimitAddOn,
-    nextAddonQuantity
-  )
+
+  let changeRequest
+  if (recurlySubscription.hasAddOn(MEMBERS_LIMIT_ADD_ON_CODE)) {
+    // Not providing a custom price as once the subscription is locked
+    // to an add-on at a given price, it will use it for subsequent payments
+    changeRequest = recurlySubscription.getRequestForAddOnUpdate(
+      MEMBERS_LIMIT_ADD_ON_CODE,
+      nextAddonQuantity
+    )
+  } else {
+    let unitPrice
+    const pattern =
+      /^group_(collaborator|professional)_(2|3|4|5|10|20|50)_(educational|enterprise)$/
+    const [, planCode, size, usage] = plan.planCode.match(pattern)
+    const currency = recurlySubscription.currency
+    const planPriceInCents =
+      GroupPlansData[usage][planCode][currency][size].price_in_cents
+    const legacyUnitPriceInCents =
+      GroupPlansData[usage][planCode][currency][size]
+        .additional_license_legacy_price_in_cents
+
+    if (
+      _shouldUseLegacyPricing(
+        recurlySubscription.planPrice,
+        planPriceInCents / 100,
+        usage,
+        size
+      )
+    ) {
+      unitPrice = legacyUnitPriceInCents / 100
+    }
+
+    changeRequest = recurlySubscription.getRequestForAddOnPurchase(
+      MEMBERS_LIMIT_ADD_ON_CODE,
+      nextAddonQuantity,
+      unitPrice
+    )
+  }
 
   return {
     changeRequest,
-    userId,
     currentAddonQuantity,
     recurlySubscription,
-    plan,
   }
 }
 
-async function previewAddSeatsSubscriptionChange(req) {
-  const { changeRequest, userId, currentAddonQuantity, plan } =
-    await _addSeatsSubscriptionChange(req)
+function _shouldUseLegacyPricing(
+  actualPlanPrice,
+  currentPlanPrice,
+  usage,
+  size
+) {
+  // For small educational groups (5 or fewer members)
+  // 2025 pricing is cheaper than legacy pricing
+  if (size <= 5 && usage === 'educational') {
+    return currentPlanPrice < actualPlanPrice
+  }
+
+  // For all other scenarios
+  // 2025 pricing is more expensive than legacy pricing
+  return currentPlanPrice > actualPlanPrice
+}
+
+async function previewAddSeatsSubscriptionChange(userId, adding) {
+  const { changeRequest, currentAddonQuantity } =
+    await _addSeatsSubscriptionChange(userId, adding)
   const paymentMethod = await RecurlyClient.promises.getPaymentMethod(userId)
   const subscriptionChange =
     await RecurlyClient.promises.previewSubscriptionChange(changeRequest)
@@ -125,9 +210,9 @@ async function previewAddSeatsSubscriptionChange(req) {
       {
         type: 'add-on-update',
         addOn: {
-          code: plan.membersLimitAddOn,
+          code: MEMBERS_LIMIT_ADD_ON_CODE,
           quantity: subscriptionChange.nextAddOns.find(
-            addon => addon.code === plan.membersLimitAddOn
+            addon => addon.code === MEMBERS_LIMIT_ADD_ON_CODE
           ).quantity,
           prevQuantity: currentAddonQuantity,
         },
@@ -139,38 +224,44 @@ async function previewAddSeatsSubscriptionChange(req) {
   return subscriptionChangePreview
 }
 
-async function createAddSeatsSubscriptionChange(req) {
-  const { changeRequest, userId, recurlySubscription } =
-    await _addSeatsSubscriptionChange(req)
+async function createAddSeatsSubscriptionChange(userId, adding) {
+  const { changeRequest, recurlySubscription } =
+    await _addSeatsSubscriptionChange(userId, adding)
   await RecurlyClient.promises.applySubscriptionChangeRequest(changeRequest)
   await SubscriptionHandler.promises.syncSubscription(
     { uuid: recurlySubscription.id },
     userId
   )
 
-  return { adding: req.body.adding }
+  return { adding }
 }
 
 async function _getUpgradeTargetPlanCodeMaybeThrow(subscription) {
-  if (!Object.keys(PLAN_UPGRADE_MAP).includes(subscription.planCode)) {
+  if (
+    subscription.planCode.includes('professional') ||
+    !subscription.groupPlan
+  ) {
     throw new Error('Not eligible for group plan upgrade')
   }
 
-  return PLAN_UPGRADE_MAP[subscription.planCode]
+  return subscription.planCode.replace('collaborator', 'professional')
 }
 
 async function _getGroupPlanUpgradeChangeRequest(ownerId) {
   const olSubscription =
     await SubscriptionLocator.promises.getUsersSubscription(ownerId)
 
-  const newPlanCode = await _getUpgradeTargetPlanCodeMaybeThrow(olSubscription)
+  await ensureSubscriptionIsActive(olSubscription)
 
+  const newPlanCode = await _getUpgradeTargetPlanCodeMaybeThrow(olSubscription)
   const recurlySubscription = await RecurlyClient.promises.getSubscription(
     olSubscription.recurlySubscription_id
   )
-  return recurlySubscription.getRequestForFlexibleLicensingGroupPlanUpgrade(
-    newPlanCode
-  )
+
+  await ensureSubscriptionCollectionMethodIsNotManual(recurlySubscription)
+  await ensureSubscriptionHasNoPendingChanges(recurlySubscription)
+
+  return recurlySubscription.getRequestForGroupPlanUpgrade(newPlanCode)
 }
 
 async function getGroupPlanUpgradePreview(ownerId) {
@@ -182,7 +273,10 @@ async function getGroupPlanUpgradePreview(ownerId) {
     {
       type: 'group-plan-upgrade',
       prevPlan: {
-        name: subscriptionChange.subscription.planName,
+        name: SubscriptionController.getPlanNameForDisplay(
+          subscriptionChange.subscription.planName,
+          subscriptionChange.subscription.planCode
+        ),
       },
     },
     subscriptionChange,
@@ -203,6 +297,13 @@ module.exports = {
   removeUserFromGroup: callbackify(removeUserFromGroup),
   replaceUserReferencesInGroups: callbackify(replaceUserReferencesInGroups),
   ensureFlexibleLicensingEnabled: callbackify(ensureFlexibleLicensingEnabled),
+  ensureSubscriptionIsActive: callbackify(ensureSubscriptionIsActive),
+  ensureSubscriptionCollectionMethodIsNotManual: callbackify(
+    ensureSubscriptionCollectionMethodIsNotManual
+  ),
+  ensureSubscriptionHasNoPendingChanges: callbackify(
+    ensureSubscriptionHasNoPendingChanges
+  ),
   getTotalConfirmedUsersInGroup: callbackify(getTotalConfirmedUsersInGroup),
   isUserPartOfGroup: callbackify(isUserPartOfGroup),
   getGroupPlanUpgradePreview: callbackify(getGroupPlanUpgradePreview),
@@ -211,6 +312,9 @@ module.exports = {
     removeUserFromGroup,
     replaceUserReferencesInGroups,
     ensureFlexibleLicensingEnabled,
+    ensureSubscriptionIsActive,
+    ensureSubscriptionCollectionMethodIsNotManual,
+    ensureSubscriptionHasNoPendingChanges,
     getTotalConfirmedUsersInGroup,
     isUserPartOfGroup,
     getUsersGroupSubscriptionDetails,

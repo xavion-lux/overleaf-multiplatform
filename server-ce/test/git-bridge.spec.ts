@@ -4,6 +4,8 @@ import { ensureUserExists, login } from './helpers/login'
 import {
   createProject,
   enableLinkSharing,
+  openProjectByName,
+  openProjectViaLinkSharingAsUser,
   shareProjectByEmailAndAcceptInviteViaDash,
 } from './helpers/project'
 
@@ -77,12 +79,11 @@ describe('git-bridge', function () {
 
     it('should render the git-bridge UI in the editor', function () {
       maybeClearAllTokens()
-      cy.visit('/project')
       createProject('git').as('projectId')
       cy.get('header').findByText('Menu').click()
       cy.findByText('Sync')
       cy.findByText('Git').click()
-      cy.findByRole('dialog').within(() => {
+      cy.findByTestId('git-bridge-modal').within(() => {
         cy.get('@projectId').then(id => {
           cy.get('code').contains(
             `git clone http://git@${gitBridgePublicHost}/git/${id}`
@@ -98,7 +99,7 @@ describe('git-bridge', function () {
       cy.url().then(url => cy.visit(url))
       cy.get('header').findByText('Menu').click()
       cy.findByText('Git').click()
-      cy.findByRole('dialog').within(() => {
+      cy.findByTestId('git-bridge-modal').within(() => {
         cy.get('@projectId').then(id => {
           cy.get('code').contains(
             `git clone http://git@${gitBridgePublicHost}/git/${id}`
@@ -120,15 +121,13 @@ describe('git-bridge', function () {
 
       let projectName: string
       beforeEach(() => {
-        cy.visit('/project')
         projectName = uuid()
-        createProject(projectName).as('projectId')
+        createProject(projectName, { open: false }).as('projectId')
       })
 
       it('should expose r/w interface to owner', () => {
         maybeClearAllTokens()
-        cy.visit('/project')
-        cy.findByText(projectName).click()
+        openProjectByName(projectName)
         checkGitAccess('readAndWrite')
       })
 
@@ -139,8 +138,7 @@ describe('git-bridge', function () {
           'Can edit'
         )
         maybeClearAllTokens()
-        cy.visit('/project')
-        cy.findByText(projectName).click()
+        openProjectByName(projectName)
         checkGitAccess('readAndWrite')
       })
 
@@ -148,32 +146,39 @@ describe('git-bridge', function () {
         shareProjectByEmailAndAcceptInviteViaDash(
           projectName,
           'collaborator-ro@example.com',
-          'Read only'
+          'Can view'
         )
         maybeClearAllTokens()
-        cy.visit('/project')
-        cy.findByText(projectName).click()
+        openProjectByName(projectName)
         checkGitAccess('readOnly')
       })
 
       it('should expose r/w interface to link-sharing r/w collaborator', () => {
+        openProjectByName(projectName)
         enableLinkSharing().then(({ linkSharingReadAndWrite }) => {
-          login('collaborator-link-rw@example.com')
+          const email = 'collaborator-link-rw@example.com'
+          login(email)
           maybeClearAllTokens()
-          cy.visit(linkSharingReadAndWrite)
-          cy.findByText(projectName) // wait for lazy loading
-          cy.findByText('Join Project').click()
+          openProjectViaLinkSharingAsUser(
+            linkSharingReadAndWrite,
+            projectName,
+            email
+          )
           checkGitAccess('readAndWrite')
         })
       })
 
       it('should expose r/o interface to link-sharing r/o collaborator', () => {
+        openProjectByName(projectName)
         enableLinkSharing().then(({ linkSharingReadOnly }) => {
-          login('collaborator-link-ro@example.com')
+          const email = 'collaborator-link-ro@example.com'
+          login(email)
           maybeClearAllTokens()
-          cy.visit(linkSharingReadOnly)
-          cy.findByText(projectName) // wait for lazy loading
-          cy.findByText('Join Project').click()
+          openProjectViaLinkSharingAsUser(
+            linkSharingReadOnly,
+            projectName,
+            email
+          )
           checkGitAccess('readOnly')
         })
       })
@@ -186,7 +191,7 @@ describe('git-bridge', function () {
       cy.findByText('Sync')
       cy.findByText('Git').click()
       cy.get('@projectId').then(projectId => {
-        cy.findByRole('dialog').within(() => {
+        cy.findByTestId('git-bridge-modal').within(() => {
           cy.get('code').contains(
             `git clone http://git@${gitBridgePublicHost}/git/${projectId}`
           )
@@ -202,7 +207,7 @@ describe('git-bridge', function () {
             // close Git modal
             cy.findAllByText('Close').last().click()
             // close editor menu
-            cy.get('#left-menu-modal').click()
+            cy.get('.left-menu-modal-backdrop').click()
 
             const fs = new LightningFS('fs')
             const dir = `/${projectId}`
@@ -363,7 +368,6 @@ Hello world
     })
     it('should not render the git-bridge UI in the editor', function () {
       login('user@example.com')
-      cy.visit('/project')
       createProject('maybe git')
       cy.get('header').findByText('Menu').click()
       cy.findByText('Word Count') // wait for lazy loading

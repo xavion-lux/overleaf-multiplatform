@@ -13,7 +13,7 @@
 import { expect } from 'chai'
 
 import async from 'async'
-import User from './helpers/User.js'
+import User from './helpers/User.mjs'
 import request from './helpers/request.js'
 import settings from '@overleaf/settings'
 
@@ -52,7 +52,7 @@ describe('ProjectFeatures', function () {
 
     describe('with an upgraded account', function () {
       beforeEach(function (done) {
-        return this.owner.upgradeFeatures(done)
+        return this.owner.upgradeSomeFeatures(done)
       })
       after(function (done) {
         return this.owner.defaultFeatures(done)

@@ -57,7 +57,7 @@ async function refreshFeatures(userId, reason) {
     try {
       await Modules.promises.hooks.fire('removeDropbox', userId, reason)
     } catch (err) {
-      logger.error(err)
+      logger.error({ err, userId }, 'removeDropbox hook failed')
     }
   }
 
@@ -66,7 +66,7 @@ async function refreshFeatures(userId, reason) {
     try {
       await Modules.promises.hooks.fire('removeGithub', userId, reason)
     } catch (err) {
-      logger.error(err)
+      logger.error({ err, userId }, 'removeGithub hook failed')
     }
   }
 
@@ -117,7 +117,7 @@ async function computeFeatures(userId) {
 async function _getIndividualFeatures(userId) {
   const subscription =
     await SubscriptionLocator.promises.getUsersSubscription(userId)
-  if (subscription == null) {
+  if (subscription == null || subscription?.recurlyStatus?.state === 'paused') {
     return {}
   }
 

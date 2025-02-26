@@ -32,7 +32,6 @@ export const getMockIde = () => {
           email: '',
         },
       },
-      state: { loading: false },
       permissionsLevel: 'readOnly',
       editor: {
         sharejs_doc: null,
@@ -52,10 +51,6 @@ export const getMockIde = () => {
       },
       settings: { syntaxValidation: false, pdfViewer: 'pdfjs' },
       hasLintingError: false,
-    },
-    editorManager: {
-      openDoc: () => {},
-      getCurrentDocId: () => {},
     },
   }
 }

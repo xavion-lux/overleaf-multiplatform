@@ -1,4 +1,4 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useState } from 'react'
 import { Change, CommentOperation } from '../../../../../types/change'
 import { ReviewPanelMessage } from './review-panel-message'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +11,7 @@ import {
   CommentId,
   ThreadId,
 } from '../../../../../types/review-panel/review-panel'
+import { usePermissionsContext } from '@/features/ide-react/context/permissions-context'
 
 export const ReviewPanelCommentContent = memo<{
   comment: Change<CommentOperation>
@@ -20,8 +21,8 @@ export const ReviewPanelCommentContent = memo<{
   onDeleteMessage?: (commentId: CommentId) => Promise<void>
   onDeleteThread?: (threadId: ThreadId) => Promise<void>
   onResolve?: () => Promise<void>
-  onLeave?: () => void
-  onEnter?: () => void
+  onLeave?: (changeId: string) => void
+  onEnter?: (changeId: string) => void
 }>(
   ({
     comment,
@@ -36,10 +37,25 @@ export const ReviewPanelCommentContent = memo<{
   }) => {
     const { t } = useTranslation()
     const threads = useThreadsContext()
+    const permissions = usePermissionsContext()
+    const [submitting, setSubmitting] = useState(false)
 
     const handleSubmit = useCallback(
-      (content, setContent) => onReply?.(content).then(() => setContent('')),
-      [onReply]
+      (content, setContent) => {
+        if (!onReply || submitting) {
+          return
+        }
+
+        setSubmitting(true)
+        onReply(content)
+          .then(() => {
+            setContent('')
+          })
+          .finally(() => {
+            setSubmitting(false)
+          })
+      },
+      [onReply, submitting]
     )
 
     const { handleChange, handleKeyPress, content } =
@@ -53,8 +69,8 @@ export const ReviewPanelCommentContent = memo<{
     return (
       <div
         className="review-panel-entry-content"
-        onMouseEnter={onEnter}
-        onMouseLeave={onLeave}
+        onMouseEnter={onEnter && (() => onEnter(comment.id))}
+        onMouseLeave={onLeave && (() => onLeave(comment.id))}
       >
         {thread.messages.map((message, i) => {
           const isReply = i !== 0
@@ -90,7 +106,7 @@ export const ReviewPanelCommentContent = memo<{
           </div>
         )}
 
-        {!isResolved && (
+        {permissions.comment && !isResolved && (
           <AutoExpandingTextArea
             name="content"
             className="review-panel-comment-input"

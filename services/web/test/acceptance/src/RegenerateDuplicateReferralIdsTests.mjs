@@ -1,5 +1,5 @@
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
 import { expect } from 'chai'
 import logger from '@overleaf/logger'
 import { filterOutput } from './helpers/settings.mjs'
@@ -117,7 +117,6 @@ describe('RegenerateDuplicateReferralIds', function () {
       `Completed batch ending ${renderObjectId(thirdBatch[BATCH_SIZE - 1])}`,
       `Completed batch ending ${renderObjectId(forthBatch[BATCH_SIZE - 1])}`,
       'Done.',
-      '',
     ])
     expect(stdOut.filter(filterOutput)).to.include.members([
       // only duplicates
@@ -137,7 +136,6 @@ describe('RegenerateDuplicateReferralIds', function () {
 
       // no new duplicates
       `Running update on batch with ids ${JSON.stringify(forthBatch)}`,
-      '',
     ])
   })
 

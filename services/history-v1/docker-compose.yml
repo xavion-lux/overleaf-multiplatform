@@ -17,6 +17,7 @@ services:
     working_dir: /overleaf/services/history-v1
     environment:
       MOCHA_GREP: ${MOCHA_GREP}
+      LOG_LEVEL: ${LOG_LEVEL:-}
       NODE_ENV: test
       NODE_OPTIONS: "--unhandled-rejections=strict"
     command: npm run --silent test:unit
@@ -35,6 +36,9 @@ services:
     working_dir: /overleaf/services/history-v1
     environment:
       ELASTIC_SEARCH_DSN: es:9200
+      REDIS_HOST: redis
+      QUEUES_REDIS_HOST: redis
+      ANALYTICS_QUEUES_REDIS_HOST: redis
       MONGO_HOST: mongo
       POSTGRES_HOST: postgres
       AWS_S3_ENDPOINT: https://minio:9000
@@ -47,12 +51,14 @@ services:
       GCS_PROJECT_ID: fake
       STORAGE_EMULATOR_HOST: http://gcs:9090/storage/v1
       MOCHA_GREP: ${MOCHA_GREP}
-      LOG_LEVEL: ERROR
+      LOG_LEVEL: ${LOG_LEVEL:-}
       NODE_ENV: test
       NODE_OPTIONS: "--unhandled-rejections=strict"
     user: node
     depends_on:
       mongo:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -65,6 +71,13 @@ services:
       gcs:
         condition: service_healthy
     command: npm run --silent test:acceptance
+
+  redis:
+    image: redis
+    healthcheck:
+      test: ping=$$(redis-cli ping) && [ "$$ping" = 'PONG' ]
+      interval: 1s
+      retries: 20
 
   mongo:
     image: mongo:6.0.13
@@ -80,13 +93,15 @@ services:
       POSTGRES_USER: overleaf
       POSTGRES_PASSWORD: overleaf
       POSTGRES_DB: overleaf-history-v1-test
+    volumes:
+      - ./test/acceptance/pg-init/:/docker-entrypoint-initdb.d/
     healthcheck:
       test: pg_isready --host=localhost --quiet
       interval: 1s
       retries: 20
 
   certs:
-    image: node:20.18.0
+    image: node:20.18.2
     volumes:
       - ./test/acceptance/certs:/certs
     working_dir: /certs

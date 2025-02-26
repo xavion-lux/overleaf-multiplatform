@@ -3,20 +3,21 @@ import useScopeValue from '@/shared/hooks/use-scope-value'
 import OLTooltip from '@/features/ui/components/ol/ol-tooltip'
 import useTutorial from '@/shared/hooks/promotions/use-tutorial'
 import { sendMB } from '../../../infrastructure/event-tracking'
-import isValidTeXFile from '../../../main/is-valid-tex-file'
+import { isValidTeXFile } from '../../../main/is-valid-tex-file'
 import { useTranslation } from 'react-i18next'
 import {
   EditorSwitchBeginnerTooltip,
   codeEditorModePrompt,
 } from './editor-switch-beginner-tooltip'
+import { useEditorManagerContext } from '@/features/ide-react/context/editor-manager-context'
 
 function EditorSwitch() {
   const { t } = useTranslation()
   const [visual, setVisual] = useScopeValue('editor.showVisual')
-  const [docName] = useScopeValue('editor.open_doc_name')
   const [codeEditorOpened] = useScopeValue('editor.codeEditorOpened')
+  const { openDocName } = useEditorManagerContext()
 
-  const richTextAvailable = isValidTeXFile(docName)
+  const richTextAvailable = openDocName ? isValidTeXFile(openDocName) : false
   const { completeTutorial } = useTutorial(codeEditorModePrompt, {
     location: 'logs',
     name: codeEditorModePrompt,

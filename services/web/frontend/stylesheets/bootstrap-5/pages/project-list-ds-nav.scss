@@ -138,10 +138,21 @@
         background-color: var(--bg-light-secondary);
         color: var(--content-secondary);
         box-shadow: none;
+        border-radius: var(--border-radius-large);
+        position: relative;
 
-        button.close {
-          color: var(--content-secondary) !important;
+        .user-notification-close {
+          border: none;
           padding: 0;
+          background: none;
+          position: absolute;
+          top: var(--spacing-07);
+          right: var(--spacing-07);
+          color: inherit;
+        }
+
+        p {
+          margin-bottom: var(--spacing-03);
         }
       }
 
@@ -238,16 +249,22 @@
       }
     }
 
-    .project-ds-nav-content {
+    .project-ds-nav-content-and-messages {
       flex-grow: 1;
-      overflow-y: auto;
-      position: relative;
-      background-color: var(--bg-light-secondary);
+      display: flex;
+      flex-direction: column;
 
-      @include media-breakpoint-up(md) {
-        border-top-left-radius: var(--border-radius-large);
-        border-left: 1px solid var(--border-divider);
-        border-top: 1px solid var(--border-divider);
+      .project-ds-nav-content {
+        flex-grow: 1;
+        overflow-y: auto;
+        position: relative;
+        background-color: var(--bg-light-secondary);
+
+        @include media-breakpoint-up(md) {
+          border-top-left-radius: var(--border-radius-large);
+          border-left: 1px solid var(--border-divider);
+          border-top: 1px solid var(--border-divider);
+        }
       }
     }
   }
@@ -287,14 +304,12 @@
     }
   }
 
-  .ds-nav-ds-link {
+  .ds-nav-ds-name {
     margin-bottom: var(--spacing-05);
 
-    a {
-      color: var(--content-secondary) !important;
+    span {
       text-transform: uppercase;
       font-weight: bold;
-      text-decoration: none;
 
       @include body-xs;
     }

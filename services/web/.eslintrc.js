@@ -107,7 +107,14 @@ module.exports = {
       },
       plugins: ['unicorn'],
       rules: {
-        'import/no-unresolved': 'error',
+        'import/no-unresolved': [
+          'error',
+          {
+            // eslint-plugin-import does not support exports directive in package.json
+            // https://github.com/import-js/eslint-plugin-import/issues/1810
+            ignore: ['^p-queue$'],
+          },
+        ],
         'import/extensions': [
           'error',
           'ignorePackages',
@@ -219,6 +226,24 @@ module.exports = {
       extends: ['plugin:cypress/recommended'],
     },
     {
+      // Frontend test specific rules
+      files: ['**/frontend/**/*.test.{js,jsx,ts,tsx}'],
+      plugins: ['testing-library'],
+      extends: ['plugin:testing-library/react'],
+      rules: {
+        'testing-library/no-await-sync-events': 'off',
+        'testing-library/no-await-sync-queries': 'off',
+        'testing-library/no-container': 'off',
+        'testing-library/no-node-access': 'off',
+        'testing-library/no-render-in-lifecycle': 'off',
+        'testing-library/no-wait-for-multiple-assertions': 'off',
+        'testing-library/no-wait-for-side-effects': 'off',
+        'testing-library/prefer-query-by-disappearance': 'off',
+        'testing-library/prefer-screen-queries': 'off',
+        'testing-library/render-result-naming-convention': 'off',
+      },
+    },
+    {
       // Frontend specific rules
       files: [
         '**/frontend/js/**/*.{js,jsx,ts,tsx}',
@@ -244,7 +269,6 @@ module.exports = {
       globals: {
         __webpack_public_path__: true,
         $: true,
-        angular: true,
         ga: true,
       },
       rules: {

@@ -42,7 +42,7 @@ for (const [usage, planData] of Object.entries(groups)) {
 
     // Generate plans in settings
     for (const size of sizes) {
-      Settings.plans.push({
+      const plan = {
         planCode: `group_${planCode}_${size}_${usage}`,
         name: `${
           Settings.appName
@@ -55,8 +55,13 @@ for (const [usage, planData] of Object.entries(groups)) {
         features: Settings.features[planCode],
         groupPlan: true,
         membersLimit: parseInt(size),
+        // Add the `membersLimitAddOn` to all group plans
         membersLimitAddOn: 'additional-license',
-      })
+        // Unlock flexible licensing for all group plans
+        canUseFlexibleLicensing: true,
+      }
+
+      Settings.plans.push(plan)
     }
   }
 }

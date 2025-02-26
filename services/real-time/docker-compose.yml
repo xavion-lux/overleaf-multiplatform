@@ -6,7 +6,7 @@ version: "2.3"
 
 services:
   test_unit:
-    image: node:20.18.0
+    image: node:20.18.2
     volumes:
       - .:/overleaf/services/real-time
       - ../../node_modules:/overleaf/node_modules
@@ -14,13 +14,14 @@ services:
     working_dir: /overleaf/services/real-time
     environment:
       MOCHA_GREP: ${MOCHA_GREP}
+      LOG_LEVEL: ${LOG_LEVEL:-}
       NODE_ENV: test
       NODE_OPTIONS: "--unhandled-rejections=strict"
     command: npm run --silent test:unit
     user: node
 
   test_acceptance:
-    image: node:20.18.0
+    image: node:20.18.2
     volumes:
       - .:/overleaf/services/real-time
       - ../../node_modules:/overleaf/node_modules
@@ -34,7 +35,7 @@ services:
       MONGO_HOST: mongo
       POSTGRES_HOST: postgres
       MOCHA_GREP: ${MOCHA_GREP}
-      LOG_LEVEL: ERROR
+      LOG_LEVEL: ${LOG_LEVEL:-}
       NODE_ENV: test
       NODE_OPTIONS: "--unhandled-rejections=strict"
     user: node

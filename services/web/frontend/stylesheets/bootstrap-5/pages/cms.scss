@@ -27,16 +27,6 @@
 
 .cms-page {
   .sales-contact-form-left-column {
-    .sales-contact-form-heading-title {
-      font-size: 2.25rem;
-      font-family: var(--font-family-san-serif);
-      font-style: normal;
-      font-weight: 600;
-      line-height: 1.333;
-      padding-top: 8px;
-      padding-right: 50px;
-    }
-
     @include media-breakpoint-up(sm) {
       .names-container {
         display: flex;
@@ -48,6 +38,10 @@
       font-size: 16px;
       font-weight: 400;
     }
+  }
+
+  .row {
+    row-gap: var(--spacing-13);
   }
 
   .p-no-text-nodes:has(.btn) {
@@ -82,6 +76,15 @@
     .paragraphs-margin-#{$spacing-option} {
       p {
         margin-bottom: var(--#{$spacing-option});
+      }
+    }
+  }
+
+  // create .paragraphs-top-margin-spacing-00, .paragraphs-top-margin-spacing-01, .paragraphs-top-margin-spacing-02, .paragraphs-top-margin-spacing-03, .paragraphs-top-margin-spacing-04, .paragraphs-top-margin-spacing-05, .paragraphs-top-margin-spacing-06, .paragraphs-top-margin-spacing-07, .paragraphs-top-margin-spacing-08, .paragraphs-top-margin-spacing-09, .paragraphs-top-margin-spacing-10, .paragraphs-top-margin-spacing-11, .paragraphs-top-margin-spacing-12, .paragraphs-top-margin-spacing-13, .paragraphs-top-margin-spacing-14, .paragraphs-top-margin-spacing-15, .paragraphs-top-margin-spacing-16
+  @each $spacing-option in $all-spacings {
+    .paragraphs-top-margin-#{$spacing-option} {
+      p {
+        margin-top: var(--#{$spacing-option}) !important;
       }
     }
   }
@@ -457,6 +460,10 @@
     > :last-child {
       > :last-child {
         margin-bottom: 0;
+
+        :last-child {
+          margin-bottom: 0;
+        }
       }
     }
   }
@@ -722,10 +729,6 @@
 // Mobile layout options depdendent on mobile breakpoint
 @include media-breakpoint-down(lg) {
   .cms-page {
-    div.row {
-      row-gap: var(--spacing-13);
-    }
-
     .reverse-col-order-mobile {
       flex-direction: column-reverse;
     }

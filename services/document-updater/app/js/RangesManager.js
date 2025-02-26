@@ -80,13 +80,6 @@ const RangesManager = {
       }
     }
 
-    sanityCheckTrackedChanges(
-      projectId,
-      docId,
-      rangesTracker.changes,
-      getDocLength(newDocLines)
-    )
-
     if (
       rangesTracker.changes?.length > RangesManager.MAX_CHANGES ||
       rangesTracker.comments?.length > RangesManager.MAX_COMMENTS
@@ -139,12 +132,6 @@ const RangesManager = {
     logger.debug(`accepting ${changeIds.length} changes in ranges`)
     const rangesTracker = new RangesTracker(changes, comments)
     rangesTracker.removeChangeIds(changeIds)
-    sanityCheckTrackedChanges(
-      projectId,
-      docId,
-      rangesTracker.changes,
-      getDocLength(lines)
-    )
     const newRanges = RangesManager._getRanges(rangesTracker)
     return newRanges
   },
@@ -352,6 +339,12 @@ function getHistoryOpForInsert(op, comments, changes) {
     }
   }
 
+  // If it's determined that the op is a tracked delete rejection, we have to
+  // calculate its proper history position. If multiple tracked deletes are
+  // found at the same position as the insert, the tracked deletes that come
+  // before the tracked delete that was actually rejected offset the history
+  // position.
+  let trackedDeleteRejectionOffset = 0
   for (const change of changes) {
     if (!isDelete(change.op)) {
       // We're only interested in tracked deletes
@@ -362,14 +355,25 @@ function getHistoryOpForInsert(op, comments, changes) {
       // Tracked delete is before the op. Move the op forward.
       hpos += change.op.d.length
     } else if (change.op.p === op.p) {
-      // Tracked delete is at the same position as the op. The insert comes before
-      // the tracked delete so it doesn't move.
+      // Tracked delete is at the same position as the op.
       if (op.u && change.op.d.startsWith(op.i)) {
         // We're undoing and the insert matches the start of the tracked
         // delete. RangesManager treats this as a tracked delete rejection. We
         // will note this in the op so that project-history can take the
         // appropriate action.
         trackedDeleteRejection = true
+
+        // The history must be updated to take into account all preceding
+        // tracked deletes at the same position
+        hpos += trackedDeleteRejectionOffset
+
+        // No need to continue. All subsequent tracked deletes are after the
+        // insert.
+        break
+      } else {
+        // This tracked delete does not match the insert. Note its length in
+        // case we find a tracked delete that matches later.
+        trackedDeleteRejectionOffset += change.op.d.length
       }
     } else {
       // Tracked delete is after the insert. Tracked deletes are ordered, so
@@ -568,90 +572,6 @@ function getCroppedCommentOps(op, comments) {
   }
 
   return historyCommentOps
-}
-
-/**
- * Check some tracked changes assumptions:
- *
- * - Tracked changes can't be empty
- * - Tracked inserts can't overlap with another tracked change
- * - There can't be two tracked deletes at the same position
- * - Ranges should be ordered by position, deletes before inserts
- *
- * If any assumption isn't upheld, log a warning.
- *
- * @param {string} projectId
- * @param {string} docId
- * @param {TrackedChange[]} changes
- * @param {number} docLength
- */
-function sanityCheckTrackedChanges(projectId, docId, changes, docLength) {
-  let lastDeletePos = -1 // allow a tracked delete at position 0
-  let lastInsertEnd = 0
-  let ok = true
-  let badChangeIndex
-  for (let i = 0; i < changes.length; i++) {
-    const change = changes[i]
-
-    const op = change.op
-    if ('i' in op) {
-      if (
-        op.i.length === 0 ||
-        op.p < lastDeletePos ||
-        op.p < lastInsertEnd ||
-        op.p < 0 ||
-        op.p + op.i.length > docLength
-      ) {
-        ok = false
-        badChangeIndex = i
-        break
-      }
-      lastInsertEnd = op.p + op.i.length
-    } else if ('d' in op) {
-      if (
-        op.d.length === 0 ||
-        op.p <= lastDeletePos ||
-        op.p < lastInsertEnd ||
-        op.p < 0 ||
-        op.p > docLength
-      ) {
-        ok = false
-        badChangeIndex = i
-        break
-      }
-      lastDeletePos = op.p
-      if (lastDeletePos >= docLength) {
-        badChangeIndex = i
-        break
-      }
-    }
-  }
-
-  if (ok) {
-    return
-  }
-
-  const changeRanges = []
-  for (const change of changes) {
-    if ('i' in change.op) {
-      changeRanges.push({
-        id: change.id,
-        p: change.op.p,
-        i: change.op.i.length,
-      })
-    } else if ('d' in change.op) {
-      changeRanges.push({
-        id: change.id,
-        p: change.op.p,
-        d: change.op.d.length,
-      })
-    }
-  }
-
-  logger.warn(
-    { projectId, docId, changes: changeRanges, badChangeIndex },
-    'Malformed tracked changes detected'
-  )
 }
 
 module.exports = RangesManager

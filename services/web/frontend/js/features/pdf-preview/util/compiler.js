@@ -5,6 +5,7 @@ import { debounce } from 'lodash'
 import { trackPdfDownload } from './metrics'
 import { enablePdfCaching } from './pdf-caching-flags'
 import { debugConsole } from '@/utils/debugging'
+import { signalWithTimeout } from '@/utils/abort-signal'
 
 const AUTO_COMPILE_MAX_WAIT = 5000
 // We add a 2 second debounce to sending user changes to server if they aren't
@@ -30,6 +31,7 @@ export default class DocumentCompiler {
     setError,
     cleanupCompileResult,
     signal,
+    openDocs,
   }) {
     this.compilingRef = compilingRef
     this.projectId = projectId
@@ -41,6 +43,7 @@ export default class DocumentCompiler {
     this.setError = setError
     this.cleanupCompileResult = cleanupCompileResult
     this.signal = signal
+    this.openDocs = openDocs
 
     this.projectRootDocId = null
     this.clsiServerId = null
@@ -61,40 +64,6 @@ export default class DocumentCompiler {
         maxWait: AUTO_COMPILE_MAX_WAIT,
       }
     )
-
-    this._onDocSavedCallback = null
-  }
-
-  async _awaitBufferedOps() {
-    const removeEventListener = () => {
-      clearTimeout(this.pendingOpTimeout)
-      if (this._onDocSavedCallback) {
-        window.removeEventListener('doc:saved', this._onDocSavedCallback)
-        this._onDocSavedCallback = null
-      }
-    }
-
-    removeEventListener()
-    return new Promise(resolve => {
-      if (!this.currentDoc?.hasBufferedOps?.()) {
-        return resolve()
-      }
-
-      this._onDocSavedCallback = () => {
-        // TODO: it's possible that there's more than one doc open with buffered ops, and ideally we'd wait for all docs to be flushed
-        removeEventListener()
-        resolve()
-      }
-
-      clearTimeout(this.pendingOpTimeout)
-      this.pendingOpTimeout = setTimeout(() => {
-        removeEventListener()
-        resolve()
-      }, PENDING_OP_MAX_WAIT)
-
-      window.addEventListener('doc:saved', this._onDocSavedCallback)
-      window.dispatchEvent(new CustomEvent('flush-changes'))
-    })
   }
 
   // The main "compile" function.
@@ -118,7 +87,9 @@ export default class DocumentCompiler {
     }
 
     try {
-      await this._awaitBufferedOps()
+      await this.openDocs.awaitBufferedOps(
+        signalWithTimeout(this.signal, PENDING_OP_MAX_WAIT)
+      )
 
       // reset values
       this.setChangedAt(0) // TODO: wait for doc:saved?
@@ -176,7 +147,7 @@ export default class DocumentCompiler {
   // if it contains "\documentclass" then use this as the root doc
   getRootDocOverrideId() {
     // only override when not in the root doc itself
-    if (this.currentDoc.doc_id !== this.projectRootDocId) {
+    if (this.currentDoc && this.currentDoc.doc_id !== this.projectRootDocId) {
       const snapshot = this.currentDoc.getSnapshot()
 
       if (snapshot && isMainFile(snapshot)) {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation, Trans } from 'react-i18next'
-import { Subscription } from '../../../../../../../../../../types/subscription/dashboard/subscription'
+import { RecurlySubscription } from '../../../../../../../../../../types/subscription/dashboard/subscription'
 import { PriceForDisplayData } from '../../../../../../../../../../types/subscription/plan'
 import { postJSON } from '../../../../../../../../infrastructure/fetch-json'
 import getMeta from '../../../../../../../../utils/meta'
@@ -25,10 +25,8 @@ import OLButton from '@/features/ui/components/ol/ol-button'
 import BootstrapVersionSwitcher from '@/features/ui/components/bootstrap-5/bootstrap-version-switcher'
 import OLNotification from '@/features/ui/components/ol/ol-notification'
 import { bsVersion } from '@/features/utils/bootstrap-5'
-import { useFeatureFlag } from '@/shared/context/split-test-context'
 
 const educationalPercentDiscount = 40
-const groupSizeForEducationalDiscount = 10
 
 function GroupPlanCollaboratorCount({ planCode }: { planCode: string }) {
   const { t } = useTranslation()
@@ -45,34 +43,6 @@ function GroupPlanCollaboratorCount({ planCode }: { planCode: string }) {
     return <>{t('unlimited_collabs')}</>
   }
   return null
-}
-
-function EducationDiscountAppliedOrNot({
-  groupSize,
-  showGroupPricing2025,
-}: {
-  groupSize: string
-  showGroupPricing2025: boolean
-}) {
-  const { t } = useTranslation()
-  const size = parseInt(groupSize)
-  if (size >= groupSizeForEducationalDiscount || showGroupPricing2025) {
-    return (
-      <p className="applied">
-        {t('educational_percent_discount_applied', {
-          percent: educationalPercentDiscount,
-        })}
-      </p>
-    )
-  }
-
-  return (
-    <p className="ineligible">
-      {t('educational_discount_for_groups_of_x_or_more', {
-        size: groupSizeForEducationalDiscount,
-      })}
-    </p>
-  )
 }
 
 function GroupPrice({
@@ -148,11 +118,10 @@ export function ChangeToGroupModal() {
   const { modal: contactModal, showModal: showContactModal } =
     useContactUsModal({ autofillProjectUrl: false })
   const groupPlans = getMeta('ol-groupPlans')
-  const personalSubscription = getMeta('ol-subscription') as Subscription
+  const personalSubscription = getMeta('ol-subscription') as RecurlySubscription
   const [error, setError] = useState(false)
   const [inflight, setInflight] = useState(false)
   const location = useLocation()
-  const showGroupPricing2025 = useFeatureFlag('group-pricing-2025')
 
   async function upgrade() {
     setError(false)
@@ -186,9 +155,15 @@ export function ChangeToGroupModal() {
     !groupPlans ||
     !groupPlans.plans ||
     !groupPlans.sizes ||
+    !groupPlans.sizesForHighDenominationCurrencies ||
     !groupPlanToChangeToCode
   )
     return null
+
+  const isUsingCOP = personalSubscription.recurly?.currency === 'COP'
+  const groupPlanSizes = isUsingCOP
+    ? groupPlans.sizesForHighDenominationCurrencies
+    : groupPlans.sizes
 
   return (
     <>
@@ -203,14 +178,6 @@ export function ChangeToGroupModal() {
         <OLModalHeader closeButton>
           <OLModalTitle className="lh-sm">
             {t('customize_your_group_subscription')}
-            <br />
-            {!showGroupPricing2025 && (
-              <span className="h5">
-                {t('save_x_percent_or_more', {
-                  percent: '30',
-                })}
-              </span>
-            )}
           </OLModalTitle>
         </OLModalHeader>
 
@@ -280,22 +247,11 @@ export function ChangeToGroupModal() {
                       value={groupPlanToChangeToSize}
                       onChange={e => setGroupPlanToChangeToSize(e.target.value)}
                     >
-                      {groupPlans.sizes.map(size => (
+                      {groupPlanSizes.map(size => (
                         <option key={`size-option-${size}`}>{size}</option>
                       ))}
                     </OLFormSelect>
                   </OLFormGroup>
-
-                  {!showGroupPricing2025 && (
-                    <OLFormGroup>
-                      <strong>
-                        {t('percent_discount_for_groups', {
-                          percent: educationalPercentDiscount,
-                          size: groupSizeForEducationalDiscount,
-                        })}
-                      </strong>
-                    </OLFormGroup>
-                  )}
 
                   <OLFormCheckbox
                     id="usage"
@@ -310,22 +266,18 @@ export function ChangeToGroupModal() {
                       }
                     }}
                     label={
-                      showGroupPricing2025 ? (
-                        <Trans
-                          i18nKey="license_for_educational_purposes_2025"
-                          values={{ percent: educationalPercentDiscount }}
-                          shouldUnescape
-                          tOptions={{ interpolation: { escapeValue: true } }}
-                          components={[
-                            /* eslint-disable-next-line react/jsx-key */
-                            <strong />,
-                            /* eslint-disable-next-line react/jsx-key */
-                            <br />,
-                          ]}
-                        />
-                      ) : (
-                        t('license_for_educational_purposes')
-                      )
+                      <Trans
+                        i18nKey="license_for_educational_purposes_confirmation"
+                        values={{ percent: educationalPercentDiscount }}
+                        shouldUnescape
+                        tOptions={{ interpolation: { escapeValue: true } }}
+                        components={[
+                          /* eslint-disable-next-line react/jsx-key */
+                          <strong />,
+                          /* eslint-disable-next-line react/jsx-key */
+                          <br />,
+                        ]}
+                      />
                     }
                   />
                 </form>
@@ -333,10 +285,11 @@ export function ChangeToGroupModal() {
             </div>
             <div className="educational-discount-badge pt-4 text-center">
               {groupPlanToChangeToUsage === 'educational' && (
-                <EducationDiscountAppliedOrNot
-                  groupSize={groupPlanToChangeToSize}
-                  showGroupPricing2025={showGroupPricing2025}
-                />
+                <p className="applied">
+                  {t('educational_percent_discount_applied', {
+                    percent: educationalPercentDiscount,
+                  })}
+                </p>
               )}
             </div>
           </div>
@@ -405,7 +358,7 @@ export function ChangeToGroupModal() {
               onClick={showContactModal}
             >
               {t('need_more_than_x_licenses', {
-                x: 50,
+                x: isUsingCOP ? 20 : 50,
               })}{' '}
               {t('please_get_in_touch')}
             </OLButton>

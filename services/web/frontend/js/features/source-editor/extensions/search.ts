@@ -9,17 +9,26 @@ import {
   highlightSelectionMatches,
   togglePanel,
 } from '@codemirror/search'
-import { Decoration, EditorView, keymap, ViewPlugin } from '@codemirror/view'
+import {
+  Decoration,
+  EditorView,
+  KeyBinding,
+  keymap,
+  ViewPlugin,
+} from '@codemirror/view'
 import {
   Annotation,
   Compartment,
   EditorSelection,
   EditorState,
+  Prec,
   SelectionRange,
   StateEffect,
   StateField,
   TransactionSpec,
 } from '@codemirror/state'
+import { sendSearchEvent } from '@/features/event-tracking/search-events'
+import { isVisual } from '@/features/source-editor/extensions/visual/visual'
 
 const restoreSearchQueryAnnotation = Annotation.define<boolean>()
 
@@ -122,6 +131,25 @@ const scrollToMatch = (range: SelectionRange, view: EditorView) => {
   })
 }
 
+const searchEventKeymap: KeyBinding[] = [
+  // record an event when the search panel is opened using the keyboard shortcut
+  {
+    key: 'Mod-f',
+    preventDefault: true,
+    scope: 'editor search-panel',
+    run(view) {
+      if (!searchPanelOpen(view.state)) {
+        sendSearchEvent('search-open', {
+          searchType: 'document',
+          method: 'keyboard',
+          mode: isVisual(view) ? 'visual' : 'source',
+        })
+      }
+      return false // continue with the regular search shortcut
+    },
+  },
+]
+
 /**
  * A collection of extensions related to the search feature.
  */
@@ -129,6 +157,9 @@ export const search = () => {
   let open = false
 
   return [
+    // keymap for search events
+    Prec.high(keymap.of(searchEventKeymap)),
+
     // keymap for search
     keymap.of(searchKeymap),
 
@@ -268,6 +299,9 @@ const searchFormTheme = EditorView.theme({
     '--ol-cm-search-form-error-shadow':
       'inset 0 1px 1px rgb(0 0 0 / 8%), 0 0 8px var(--red-50)',
     containerType: 'inline-size',
+    '& .form-control-sm, & .btn-sm': {
+      padding: 'var(--spacing-03) var(--spacing-05)',
+    },
   },
   '&.bootstrap-5 .ol-cm-search-form': {
     '--ol-cm-search-form-gap': 'var(--spacing-05)',
@@ -280,6 +314,7 @@ const searchFormTheme = EditorView.theme({
     gridTemplateColumns: 'auto auto',
     gridTemplateRows: 'auto auto',
     gap: 'var(--ol-cm-search-form-gap)',
+    flex: 1,
   },
   '@container (max-width: 450px)': {
     '.ol-cm-search-controls': {
@@ -301,7 +336,7 @@ const searchFormTheme = EditorView.theme({
     borderRadius: '20px',
     background: 'white',
     width: '100%',
-    maxWidth: '25em',
+    maxWidth: '50em',
     display: 'inline-flex',
     alignItems: 'center',
     '& input[type="text"]': {

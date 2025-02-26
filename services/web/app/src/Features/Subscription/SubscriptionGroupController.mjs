@@ -12,6 +12,14 @@ import SplitTestHandler from '../SplitTests/SplitTestHandler.js'
 import ErrorController from '../Errors/ErrorController.js'
 import UserGetter from '../User/UserGetter.js'
 import { Subscription } from '../../models/Subscription.js'
+import { isProfessionalGroupPlan } from './PlansHelper.mjs'
+import {
+  MissingBillingInfoError,
+  ManuallyCollectedError,
+  PendingChangeError,
+  InactiveError,
+} from './Errors.js'
+import RecurlyClient from './RecurlyClient.js'
 
 /**
  * @import { Subscription } from "../../../../types/subscription/dashboard/subscription.js"
@@ -122,22 +130,52 @@ async function _removeUserFromGroup(
  */
 async function addSeatsToGroupSubscription(req, res) {
   try {
-    const { subscription, plan } =
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const { subscription, recurlySubscription, plan } =
       await SubscriptionGroupHandler.promises.getUsersGroupSubscriptionDetails(
-        req
+        userId
       )
     await SubscriptionGroupHandler.promises.ensureFlexibleLicensingEnabled(plan)
+    await SubscriptionGroupHandler.promises.ensureSubscriptionCollectionMethodIsNotManual(
+      recurlySubscription
+    )
+    await SubscriptionGroupHandler.promises.ensureSubscriptionHasNoPendingChanges(
+      recurlySubscription
+    )
+    // Check if the user has missing billing details
+    await RecurlyClient.promises.getPaymentMethod(userId)
+    await SubscriptionGroupHandler.promises.ensureSubscriptionIsActive(
+      subscription
+    )
 
     res.render('subscriptions/add-seats', {
       subscriptionId: subscription._id,
       groupName: subscription.teamName,
       totalLicenses: subscription.membersLimit,
+      isProfessional: isProfessionalGroupPlan(subscription),
     })
   } catch (error) {
+    if (error instanceof MissingBillingInfoError) {
+      return res.redirect(
+        '/user/subscription/group/missing-billing-information'
+      )
+    }
+
+    if (error instanceof ManuallyCollectedError) {
+      return res.redirect(
+        '/user/subscription/group/manually-collected-subscription'
+      )
+    }
+
+    if (error instanceof PendingChangeError || error instanceof InactiveError) {
+      return res.redirect('/user/subscription')
+    }
+
     logger.err(
       { error },
       'error while getting users group subscription details'
     )
+
     return res.redirect('/user/subscription')
   }
 }
@@ -149,18 +187,30 @@ async function addSeatsToGroupSubscription(req, res) {
  */
 async function previewAddSeatsSubscriptionChange(req, res) {
   try {
+    const userId = SessionManager.getLoggedInUserId(req.session)
     const preview =
       await SubscriptionGroupHandler.promises.previewAddSeatsSubscriptionChange(
-        req
+        userId,
+        req.body.adding
       )
 
     res.json(preview)
   } catch (error) {
+    if (
+      error instanceof MissingBillingInfoError ||
+      error instanceof ManuallyCollectedError ||
+      error instanceof PendingChangeError ||
+      error instanceof InactiveError
+    ) {
+      return res.status(422).end()
+    }
+
     logger.err(
       { error },
       'error trying to preview "add seats" subscription change'
     )
-    return res.status(400).end()
+
+    return res.status(500).end()
   }
 }
 
@@ -171,18 +221,30 @@ async function previewAddSeatsSubscriptionChange(req, res) {
  */
 async function createAddSeatsSubscriptionChange(req, res) {
   try {
+    const userId = SessionManager.getLoggedInUserId(req.session)
     const create =
       await SubscriptionGroupHandler.promises.createAddSeatsSubscriptionChange(
-        req
+        userId,
+        req.body.adding
       )
 
     res.json(create)
   } catch (error) {
+    if (
+      error instanceof MissingBillingInfoError ||
+      error instanceof ManuallyCollectedError ||
+      error instanceof PendingChangeError ||
+      error instanceof InactiveError
+    ) {
+      return res.status(422).end()
+    }
+
     logger.err(
       { error },
       'error trying to create "add seats" subscription change'
     )
-    return res.status(400).end()
+
+    return res.status(500).end()
   }
 }
 
@@ -239,7 +301,24 @@ async function subscriptionUpgradePage(req, res) {
       groupName: olSubscription.teamName,
     })
   } catch (error) {
+    if (error instanceof MissingBillingInfoError) {
+      return res.redirect(
+        '/user/subscription/group/missing-billing-information'
+      )
+    }
+
+    if (error instanceof ManuallyCollectedError) {
+      return res.redirect(
+        '/user/subscription/group/manually-collected-subscription'
+      )
+    }
+
+    if (error instanceof PendingChangeError || error instanceof InactiveError) {
+      return res.redirect('/user/subscription')
+    }
+
     logger.err({ error }, 'error loading upgrade subscription page')
+
     return res.redirect('/user/subscription')
   }
 }
@@ -252,6 +331,42 @@ async function upgradeSubscription(req, res) {
   } catch (error) {
     logger.err({ error }, 'error trying to upgrade subscription')
     return res.sendStatus(500)
+  }
+}
+
+async function missingBillingInformation(req, res) {
+  try {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const subscription =
+      await SubscriptionLocator.promises.getUsersSubscription(userId)
+
+    res.render('subscriptions/missing-billing-information', {
+      groupName: subscription.teamName,
+    })
+  } catch (error) {
+    logger.err(
+      { error },
+      'error trying to render missing billing information page'
+    )
+    return res.render('/user/subscription')
+  }
+}
+
+async function manuallyCollectedSubscription(req, res) {
+  try {
+    const userId = SessionManager.getLoggedInUserId(req.session)
+    const subscription =
+      await SubscriptionLocator.promises.getUsersSubscription(userId)
+
+    res.render('subscriptions/manually-collected-subscription', {
+      groupName: subscription.teamName,
+    })
+  } catch (error) {
+    logger.err(
+      { error },
+      'error trying to render manually collected subscription page'
+    )
+    return res.render('/user/subscription')
   }
 }
 
@@ -269,4 +384,6 @@ export default {
   ),
   subscriptionUpgradePage: expressify(subscriptionUpgradePage),
   upgradeSubscription: expressify(upgradeSubscription),
+  missingBillingInformation: expressify(missingBillingInformation),
+  manuallyCollectedSubscription: expressify(manuallyCollectedSubscription),
 }

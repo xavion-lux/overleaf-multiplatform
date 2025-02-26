@@ -49,6 +49,8 @@ const UserGetter = require('../User/UserGetter')
 const {
   isStandaloneAiAddOnPlanCode,
 } = require('../Subscription/RecurlyEntities')
+const SubscriptionController = require('../Subscription/SubscriptionController.js')
+const { formatCurrency } = require('../../util/currency')
 
 /**
  * @import { GetProjectsRequest, GetProjectsResponse, Project } from "./types"
@@ -331,16 +333,15 @@ const _ProjectController = {
     }
 
     const splitTests = [
-      !anonymous && 'bib-file-tpr-prompt',
       'compile-log-events',
-      'math-preview',
+      'external-socket-heartbeat',
+      'full-project-search',
       'null-test-share-modal',
       'paywall-cta',
       'pdf-caching-cached-url-lookup',
       'pdf-caching-mode',
       'pdf-caching-prefetch-large',
       'pdf-caching-prefetching',
-      'pdf-presentation-mode',
       'revert-file',
       'revert-project',
       'review-panel-redesign',
@@ -354,6 +355,8 @@ const _ProjectController = {
       'ai-add-on',
       'reviewer-role',
       'papers-integration',
+      'editor-redesign',
+      'paywall-change-compile-timeout',
     ].filter(Boolean)
 
     const getUserValues = async userId =>
@@ -362,7 +365,7 @@ const _ProjectController = {
           user: (async () => {
             const user = await User.findById(
               userId,
-              'email first_name last_name referal_id signUpDate featureSwitches features featuresEpoch refProviders alphaProgram betaProgram isAdmin ace labsProgram completedTutorials writefull'
+              'email first_name last_name referal_id signUpDate featureSwitches features featuresEpoch refProviders alphaProgram betaProgram isAdmin ace labsProgram completedTutorials writefull aiErrorAssistant'
             ).exec()
             // Handle case of deleted user
             if (!user) {
@@ -405,6 +408,13 @@ const _ProjectController = {
           usedLatex: OnboardingDataCollectionManager.getOnboardingDataValue(
             userId,
             'usedLatex'
+          ).catch(err => {
+            logger.error({ err, userId })
+            return null
+          }),
+          odcRole: OnboardingDataCollectionManager.getOnboardingDataValue(
+            userId,
+            'role'
           ).catch(err => {
             logger.error({ err, userId })
             return null
@@ -462,6 +472,7 @@ const _ProjectController = {
         isTokenMember,
         isInvitedMember,
         usedLatex,
+        odcRole,
       } = userValues
 
       const brandVariation = project?.brandVariationId
@@ -483,44 +494,32 @@ const _ProjectController = {
           anonRequestToken
         )
 
-      const [linkSharingChanges, linkSharingEnforcement] = await Promise.all([
-        SplitTestHandler.promises.getAssignmentForUser(
+      const reviewerRoleAssignment =
+        await SplitTestHandler.promises.getAssignmentForUser(
           project.owner_ref,
-          'link-sharing-warning'
-        ),
-        SplitTestHandler.promises.getAssignmentForUser(
-          project.owner_ref,
-          'link-sharing-enforcement'
-        ),
-      ])
+          'reviewer-role'
+        )
 
-      if (linkSharingChanges?.variant === 'active') {
-        if (linkSharingEnforcement?.variant === 'active') {
-          await Modules.promises.hooks.fire(
-            'enforceCollaboratorLimit',
+      await Modules.promises.hooks.fire('enforceCollaboratorLimit', projectId)
+      if (isTokenMember) {
+        // Check explicitly that the user is in read write token refs, while this could be inferred
+        // from the privilege level, the privilege level of token members might later be restricted
+        const isReadWriteTokenMember =
+          await CollaboratorsGetter.promises.userIsReadWriteTokenMember(
+            userId,
             projectId
           )
-        }
-        if (isTokenMember) {
-          // Check explicitly that the user is in read write token refs, while this could be inferred
-          // from the privilege level, the privilege level of token members might later be restricted
-          const isReadWriteTokenMember =
-            await CollaboratorsGetter.promises.userIsReadWriteTokenMember(
+        if (isReadWriteTokenMember) {
+          // Check for an edge case where a user is both in read write token access refs but also
+          // an invited read write member. Ensure they are not redirected to the sharing updates page
+          // We could also delete the token access ref if the user is already a member of the project
+          const isInvitedReadWriteMember =
+            await CollaboratorsGetter.promises.isUserInvitedReadWriteMemberOfProject(
               userId,
               projectId
             )
-          if (isReadWriteTokenMember) {
-            // Check for an edge case where a user is both in read write token access refs but also
-            // an invited read write member. Ensure they are not redirected to the sharing updates page
-            // We could also delete the token access ref if the user is already a member of the project
-            const isInvitedReadWriteMember =
-              await CollaboratorsGetter.promises.isUserInvitedReadWriteMemberOfProject(
-                userId,
-                projectId
-              )
-            if (!isInvitedReadWriteMember) {
-              return res.redirect(`/project/${projectId}/sharing-updates`)
-            }
+          if (!isInvitedReadWriteMember) {
+            return res.redirect(`/project/${projectId}/sharing-updates`)
           }
         }
       }
@@ -577,11 +576,22 @@ const _ProjectController = {
         const namedEditors = project.collaberator_refs?.length || 0
         const pendingEditors = project.pendingEditor_refs?.length || 0
         const exceedAtLimit = planLimit > -1 && namedEditors >= planLimit
+
+        let editMode = 'edit'
+        if (privilegeLevel === PrivilegeLevels.READ_ONLY) {
+          editMode = 'view'
+        } else if (
+          project.track_changes === true ||
+          project.track_changes?.[userId] === true
+        ) {
+          editMode = 'review'
+        }
+
         const projectOpenedSegmentation = {
+          role: privilegeLevel,
+          editMode,
+          ownerId: project.owner_ref,
           projectId: project._id,
-          // temporary link sharing segmentation:
-          linkSharingWarning: linkSharingChanges?.variant,
-          linkSharingEnforcement: linkSharingEnforcement?.variant,
           namedEditors,
           pendingEditors,
           tokenEditors: project.tokenAccessReadAndWrite_refs?.length || 0,
@@ -663,10 +673,16 @@ const _ProjectController = {
 
       const hasNonRecurlySubscription =
         subscription && !subscription.recurlySubscription_id
+      const hasManuallyCollectedSubscription =
+        subscription?.collectionMethod === 'manual'
+      const cannotPurchaseAddons =
+        hasNonRecurlySubscription || hasManuallyCollectedSubscription
+      const assistantDisabled = user.aiErrorAssistant?.enabled === false // the assistant has been manually disabled by the user
       const canUseErrorAssistant =
         user.features?.aiErrorAssistant ||
         (splitTestAssignments['ai-add-on']?.variant === 'enabled' &&
-          !hasNonRecurlySubscription)
+          !cannotPurchaseAddons &&
+          !assistantDisabled)
 
       let featureUsage = {}
 
@@ -733,10 +749,21 @@ const _ProjectController = {
           ? 'project/ide-react-detached'
           : 'project/ide-react'
 
-      // Get the user's assignment for this page's Bootstrap 5 split test, which
-      // populates splitTestVariants with a value for the split test name and allows
-      // Pug to read it
-      await SplitTestHandler.promises.getAssignment(req, res, 'bootstrap-5-ide')
+      let chatEnabled
+      if (Features.hasFeature('saas')) {
+        chatEnabled =
+          Features.hasFeature('chat') && req.capabilitySet.has('chat')
+      } else {
+        chatEnabled = Features.hasFeature('chat')
+      }
+
+      const isPaywallChangeCompileTimeoutEnabled =
+        splitTestAssignments['paywall-change-compile-timeout']?.variant ===
+        'enabled'
+
+      const paywallPlans =
+        isPaywallChangeCompileTimeoutEnabled &&
+        (await ProjectController._getPaywallPlansPrices(req, res))
 
       res.render(template, {
         title: project.name,
@@ -780,6 +807,7 @@ const _ProjectController = {
           lineHeight: user.ace.lineHeight || 'normal',
           overallTheme: user.ace.overallTheme,
           mathPreview: user.ace.mathPreview,
+          referencesSearchMode: user.ace.referencesSearchMode,
         },
         privilegeLevel,
         anonymous,
@@ -790,7 +818,10 @@ const _ProjectController = {
           isTokenMember,
           isInvitedMember
         ),
-        chatEnabled: Features.hasFeature('chat'),
+        chatEnabled,
+        projectHistoryBlobsEnabled: Features.hasFeature(
+          'project-history-blobs'
+        ),
         roMirrorOnClientNoLocalStorage:
           Settings.adminOnlyLogin || project.name.startsWith('Debug: '),
         languages: Settings.languages,
@@ -817,26 +848,57 @@ const _ProjectController = {
         useOpenTelemetry: Settings.useOpenTelemetryClient,
         hasTrackChangesFeature: Features.hasFeature('track-changes'),
         projectTags,
-        linkSharingWarning: linkSharingChanges?.variant === 'active',
-        linkSharingEnforcement: linkSharingEnforcement?.variant === 'active',
         usedLatex:
           // only use the usedLatex value if the split test is enabled
           splitTestAssignments['default-visual-for-beginners']?.variant ===
           'enabled'
             ? usedLatex
             : null,
+        odcRole:
+          // only use the ODC role value if the split test is enabled
+          splitTestAssignments['paywall-change-compile-timeout']?.variant ===
+          'enabled'
+            ? odcRole
+            : null,
         isSaas: Features.hasFeature('saas'),
         shouldLoadHotjar: splitTestAssignments.hotjar?.variant === 'enabled',
         isReviewerRoleEnabled:
-          (privilegeLevel === PrivilegeLevels.OWNER &&
-            splitTestAssignments['reviewer-role']?.variant === 'enabled') ||
+          reviewerRoleAssignment?.variant === 'enabled' ||
           Object.keys(project.reviewer_refs || {}).length > 0,
+        isPaywallChangeCompileTimeoutEnabled,
+        paywallPlans,
       })
       timer.done()
     } catch (err) {
       OError.tag(err, 'error getting details for project page')
       return next(err)
     }
+  },
+
+  async _getPaywallPlansPrices(
+    req,
+    res,
+    paywallPlans = ['collaborator', 'student']
+  ) {
+    const plansData = {}
+
+    const locale = req.i18n.language
+    const { currency } = await SubscriptionController.getRecommendedCurrency(
+      req,
+      res
+    )
+
+    paywallPlans.forEach(plan => {
+      const planPrice = Settings.localizedPlanPricing[currency][plan].monthly
+      const formattedPlanPrice = formatCurrency(
+        planPrice,
+        currency,
+        locale,
+        true
+      )
+      plansData[plan] = formattedPlanPrice
+    })
+    return plansData
   },
 
   async _refreshFeatures(req, user) {
@@ -1141,6 +1203,7 @@ const ProjectController = {
   _injectProjectUsers: _ProjectController._injectProjectUsers,
   _isInPercentageRollout: _ProjectController._isInPercentageRollout,
   _refreshFeatures: _ProjectController._refreshFeatures,
+  _getPaywallPlansPrices: _ProjectController._getPaywallPlansPrices,
 }
 
 module.exports = ProjectController

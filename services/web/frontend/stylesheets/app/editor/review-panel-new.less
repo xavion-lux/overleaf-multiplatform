@@ -50,7 +50,8 @@
   }
 
   .review-panel-entry.review-panel-entry-selected,
-  .review-panel-entry.review-panel-entry-highlighted {
+  .review-panel-entry.review-panel-entry-highlighted,
+  .review-panel-entry.review-panel-entry-textarea-focused {
     margin-left: @spacing-01;
     border: 1px solid @blue-50;
     // shadow-md
@@ -497,7 +498,7 @@
     }
   }
 
-  .review-panel-overview-file-header {
+  .collapsible-file-header {
     all: unset;
     padding: 6px 8px;
     font-size: 14px;
@@ -523,7 +524,7 @@
     padding-bottom: 6px;
   }
 
-  .review-panel-overview-file-entry-count {
+  .collapsible-file-header-count {
     background-color: @neutral-20;
     padding: 2px 4px;
     margin-left: auto;
@@ -693,6 +694,12 @@
   border-radius: 4px;
   padding: 4px;
   gap: 4px;
+  transition: opacity 0.05s ease-in;
+  opacity: 0;
+}
+
+.review-tooltip-menu-visible {
+  opacity: 1;
 }
 
 .review-tooltip-menu-button {

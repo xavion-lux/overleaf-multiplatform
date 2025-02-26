@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import ControlledDropdown from '@/shared/components/controlled-dropdown'
 import classNames from 'classnames'
-import { useFeatureFlag } from '@/shared/context/split-test-context'
 import BootstrapVersionSwitcher from '@/features/ui/components/bootstrap-5/bootstrap-version-switcher'
 import {
   Dropdown,
@@ -14,8 +13,7 @@ import {
   DropdownToggle,
 } from '@/features/ui/components/bootstrap-5/dropdown-menu'
 import FormControl from '@/features/ui/components/bootstrap-5/form/form-control'
-
-const isMac = /Mac/.test(window.navigator?.platform)
+import { isMac } from '@/shared/utils/os'
 
 const shortcuts = isMac
   ? {
@@ -50,8 +48,6 @@ function PdfZoomDropdown({
 }: PdfZoomDropdownProps) {
   const { t } = useTranslation()
 
-  const enablePresentationMode = useFeatureFlag('pdf-presentation-mode')
-
   const [customZoomValue, setCustomZoomValue] = useState<string>(
     rawScaleToPercentage(rawScale)
   )
@@ -60,7 +56,7 @@ function PdfZoomDropdown({
     setCustomZoomValue(rawScaleToPercentage(rawScale))
   }, [rawScale])
 
-  const showPresentOption = enablePresentationMode && document.fullscreenEnabled
+  const showPresentOption = document.fullscreenEnabled
 
   return (
     <BootstrapVersionSwitcher
